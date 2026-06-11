@@ -10,20 +10,127 @@ import { gzipSync } from "zlib";
 
 const CODEBUDDY_SYSTEM_PROMPT = "You are CodeBuddy Code.";
 const CODEBUDDY_MIN_OUTPUT_TOKENS = 16;
+const CODEBUDDY_TOOL_DESCRIPTION_MAX_CHARS = 1200;
+const CODEBUDDY_SCHEMA_DESCRIPTION_MAX_CHARS = 500;
+const CODEBUDDY_ALLOWED_REQUEST_FIELDS = [
+  "temperature",
+  "top_p",
+  "presence_penalty",
+  "frequency_penalty",
+  "stop",
+  "tool_choice",
+  "parallel_tool_calls",
+  "response_format",
+];
 
 function codeBuddyRequestId() {
   return randomUUID().replace(/-/g, "");
 }
 
-function normalizeCodeBuddyMessages(messages) {
-  const next = Array.isArray(messages) ? messages.map((message) => ({ ...message })) : [];
-  if (next[0]?.role !== "system") {
-    next.unshift({ role: "system", content: CODEBUDDY_SYSTEM_PROMPT });
+function truncateMiddle(text, maxChars, label = "truncated for CodeBuddy") {
+  if (typeof text !== "string" || text.length <= maxChars) return text;
+  const head = Math.floor(maxChars * 0.75);
+  const tail = Math.max(0, maxChars - head - label.length - 12);
+  return `${text.slice(0, head)}\n\n[${label}]\n\n${text.slice(-tail)}`;
+}
+
+function sanitizeCodeBuddyContent(content, role) {
+  if (role === "system" || role === "developer") return "";
+  if (typeof content === "string") {
+    return content;
   }
-  return next.map((message) => {
-    if (message.role !== "user" || typeof message.content !== "string") return message;
-    return { ...message, content: [{ type: "text", text: message.content }] };
+  if (!Array.isArray(content)) return content;
+  return content.map((part) => {
+    if (!part || typeof part !== "object") return part;
+    return part;
   });
+}
+
+function sanitizeCodeBuddySchema(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(sanitizeCodeBuddySchema);
+  const next = { ...schema };
+  if (typeof next.description === "string") {
+    next.description = truncateMiddle(
+      next.description,
+      CODEBUDDY_SCHEMA_DESCRIPTION_MAX_CHARS,
+      "schema description truncated"
+    );
+  }
+  for (const key of Object.keys(next)) {
+    if (key !== "description" && next[key] && typeof next[key] === "object") {
+      next[key] = sanitizeCodeBuddySchema(next[key]);
+    }
+  }
+  return next;
+}
+
+function normalizeCodeBuddyTools(tools) {
+  if (!Array.isArray(tools)) return tools;
+  return tools.map((tool) => {
+    if (!tool || typeof tool !== "object") return tool;
+    if (tool.function && typeof tool.function === "object") {
+      return {
+        ...tool,
+        function: {
+          ...tool.function,
+          description: truncateMiddle(
+            tool.function.description || "",
+            CODEBUDDY_TOOL_DESCRIPTION_MAX_CHARS,
+            "tool description truncated"
+          ),
+          parameters: sanitizeCodeBuddySchema(tool.function.parameters),
+        },
+      };
+    }
+    return {
+      ...tool,
+      description: truncateMiddle(
+        tool.description || "",
+        CODEBUDDY_TOOL_DESCRIPTION_MAX_CHARS,
+        "tool description truncated"
+      ),
+      input_schema: sanitizeCodeBuddySchema(tool.input_schema),
+      parameters: sanitizeCodeBuddySchema(tool.parameters),
+    };
+  });
+}
+
+function normalizeCodeBuddyMessages(messages) {
+  const source = Array.isArray(messages) ? messages : [];
+  const next = [{ role: "system", content: CODEBUDDY_SYSTEM_PROMPT }];
+  for (const message of source) {
+    if (!message || typeof message !== "object") continue;
+    if (message.role === "system" || message.role === "developer") continue;
+    const sanitized = {
+      ...message,
+      content: sanitizeCodeBuddyContent(message.content, message.role),
+    };
+    if (sanitized.role === "user" && typeof sanitized.content === "string") {
+      next.push({ ...sanitized, content: [{ type: "text", text: sanitized.content }] });
+    } else {
+      next.push(sanitized);
+    }
+  }
+  return next;
+}
+
+function buildCodeBuddyBody(model, transformed, maxTokens, maxCompletionTokens) {
+  const body = {
+    model,
+    messages: normalizeCodeBuddyMessages(transformed.messages),
+    stream: true,
+  };
+  for (const field of CODEBUDDY_ALLOWED_REQUEST_FIELDS) {
+    if (transformed[field] !== undefined) body[field] = transformed[field];
+  }
+  if (Array.isArray(transformed.tools)) body.tools = normalizeCodeBuddyTools(transformed.tools);
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    body.max_tokens = Math.max(maxTokens, CODEBUDDY_MIN_OUTPUT_TOKENS);
+  } else if (Number.isFinite(maxCompletionTokens) && maxCompletionTokens > 0) {
+    body.max_tokens = Math.max(maxCompletionTokens, CODEBUDDY_MIN_OUTPUT_TOKENS);
+  }
+  return body;
 }
 
 export class DefaultExecutor extends BaseExecutor {
@@ -36,18 +143,7 @@ export class DefaultExecutor extends BaseExecutor {
     if (this.provider === "codebuddy") {
       const maxTokens = Number(transformed.max_tokens);
       const maxCompletionTokens = Number(transformed.max_completion_tokens);
-      return {
-        ...transformed,
-        model,
-        messages: normalizeCodeBuddyMessages(transformed.messages),
-        ...(Number.isFinite(maxTokens) && maxTokens > 0 && maxTokens < CODEBUDDY_MIN_OUTPUT_TOKENS
-          ? { max_tokens: CODEBUDDY_MIN_OUTPUT_TOKENS }
-          : {}),
-        ...(Number.isFinite(maxCompletionTokens) && maxCompletionTokens > 0 && maxCompletionTokens < CODEBUDDY_MIN_OUTPUT_TOKENS
-          ? { max_completion_tokens: CODEBUDDY_MIN_OUTPUT_TOKENS }
-          : {}),
-        stream: true,
-      };
+      return buildCodeBuddyBody(model, transformed, maxTokens, maxCompletionTokens);
     }
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
   }
