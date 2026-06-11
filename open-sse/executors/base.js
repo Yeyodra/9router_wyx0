@@ -78,6 +78,11 @@ export class BaseExecutor {
     return body;
   }
 
+  // Override in subclass for providers that need encoded/binary request bodies.
+  prepareRequestBody(transformedBody, headers) {
+    return JSON.stringify(transformedBody);
+  }
+
   shouldRetry(status, urlIndex) {
     return status === HTTP_STATUS.RATE_LIMITED && urlIndex + 1 < this.getFallbackCount();
   }
@@ -128,13 +133,16 @@ export class BaseExecutor {
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 
       try {
-        const bodyStr = JSON.stringify(transformedBody);
+        const requestBody = this.prepareRequestBody(transformedBody, headers);
+        const requestBodySize = typeof requestBody === "string"
+          ? requestBody.length
+          : requestBody?.byteLength ?? requestBody?.length ?? "?";
         const fetchT0 = Date.now();
-        dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
+        dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${requestBodySize}B | connectTimeout=${timeoutMs}ms`);
         const response = await proxyAwareFetch(url, {
           method: "POST",
           headers,
-          body: bodyStr,
+          body: requestBody,
           signal: mergedSignal
         }, proxyOptions);
         clearTimeout(connectTimer);

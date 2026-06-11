@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { Badge, Button, Card, CardSkeleton, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
+import { Badge, Button, Card, CardSkeleton, Input, Modal, Toggle, ConfirmModal, Pagination } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
 
 function getStatusVariant(status) {
@@ -27,6 +27,8 @@ function normalizeFormData(data = {}) {
   };
 }
 
+const PROXY_POOL_DEFAULT_PAGE_SIZE = 20;
+
 export default function ProxyPoolsPage() {
   const [proxyPools, setProxyPools] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -51,6 +53,8 @@ export default function ProxyPoolsPage() {
   const [healthProgress, setHealthProgress] = useState({ current: 0, total: 0 });
   const [bulkBusy, setBulkBusy] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PROXY_POOL_DEFAULT_PAGE_SIZE);
   const relayMenuRef = useRef(null);
   const notify = useNotificationStore();
 
@@ -208,9 +212,18 @@ export default function ProxyPoolsPage() {
     }
   };
 
-  const allSelected = proxyPools.length > 0 && selectedIds.length === proxyPools.length;
+  const totalPages = Math.max(1, Math.ceil(proxyPools.length / pageSize));
+  const activePage = Math.min(page, totalPages);
+  const paginatedProxyPools = proxyPools.slice(
+    (activePage - 1) * pageSize,
+    activePage * pageSize
+  );
+  const allSelected = paginatedProxyPools.length > 0 && paginatedProxyPools.every((pool) => selectedIds.includes(pool.id));
   const toggleSelect = (id) => setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
-  const toggleSelectAll = () => setSelectedIds(allSelected ? [] : proxyPools.map((p) => p.id));
+  const toggleSelectAll = () => setSelectedIds((prev) => {
+    if (allSelected) return prev.filter((id) => !paginatedProxyPools.some((pool) => pool.id === id));
+    return Array.from(new Set([...prev, ...paginatedProxyPools.map((pool) => pool.id)]));
+  });
   const clearSelection = () => setSelectedIds([]);
 
   const bulkSetActive = async (isActive) => {
@@ -331,6 +344,10 @@ export default function ProxyPoolsPage() {
   useEffect(() => {
     setSelectedIds((prev) => prev.filter((id) => proxyPools.some((p) => p.id === id)));
   }, [proxyPools]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(proxyPools.length / pageSize))));
+  }, [proxyPools.length, pageSize]);
 
   const openBatchImportModal = () => {
     setBatchImportText("");
@@ -646,7 +663,7 @@ export default function ProxyPoolsPage() {
                 onChange={toggleSelectAll}
                 className="size-4 rounded border-black/20 dark:border-white/20"
               />
-              {allSelected ? "Unselect all" : "Select all"}
+              {allSelected ? "Unselect visible" : "Select visible"}
             </label>
           )}
           <Badge variant="default">Total: {proxyPools.length}</Badge>
@@ -698,7 +715,7 @@ export default function ProxyPoolsPage() {
           </div>
         ) : (
           <div className="flex flex-col divide-y divide-black/[0.04] dark:divide-white/[0.05]">
-            {proxyPools.map((pool) => (
+            {paginatedProxyPools.map((pool) => (
               <div key={pool.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3 min-w-0 flex-1">
                   <input
@@ -774,6 +791,18 @@ export default function ProxyPoolsPage() {
                 </div>
               </div>
             ))}
+            {proxyPools.length > 0 && (
+              <Pagination
+                currentPage={activePage}
+                pageSize={pageSize}
+                totalItems={proxyPools.length}
+                onPageChange={setPage}
+                onPageSizeChange={(size) => {
+                  setPageSize(size);
+                  setPage(1);
+                }}
+              />
+            )}
           </div>
         )}
       </Card>

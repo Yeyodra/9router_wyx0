@@ -279,5 +279,79 @@ describe("buildKiroPayload", () => {
       // ...but the content is preserved as salvaged text, not discarded.
       expect(allJson).toContain("[Tool result: important orphaned output]");
     });
+
+    it("should trim very large tool descriptions for Kiro payload limits", () => {
+      const hugeDescription = "skill registry entry\n".repeat(20000);
+      const tools = [
+        {
+          type: "function",
+          function: {
+            name: "skill",
+            description: hugeDescription,
+            parameters: {
+              type: "object",
+              properties: { name: { type: "string" } },
+              required: ["name"]
+            }
+          }
+        },
+        ...Array.from({ length: 165 }, (_, i) => ({
+          type: "function",
+          function: {
+            name: `tool_${i}`,
+            description: `Tool ${i}`,
+            parameters: { type: "object", properties: {}, required: [] }
+          }
+        }))
+      ];
+
+      const result = buildKiroPayload("claude-sonnet-4.6", {
+        messages: [{ role: "user", content: "Use tools if needed" }],
+        tools
+      }, true, {});
+
+      const kiroTools = result.conversationState.currentMessage.userInputMessage.userInputMessageContext.tools;
+      const skillTool = kiroTools.find(t => t.toolSpecification.name === "skill");
+
+      expect(kiroTools).toHaveLength(166);
+      expect(skillTool.toolSpecification.inputSchema.json.properties.name.type).toBe("string");
+      expect(skillTool.toolSpecification.description.length).toBeLessThan(5000);
+      expect(skillTool.toolSpecification.description).toContain("[truncated for Kiro payload limit]");
+      expect(JSON.stringify(kiroTools).length).toBeLessThan(256 * 1024);
+    });
+  });
+
+  describe("thinking exposure policy", () => {
+    it("does not expose Kiro reasoning to clients by default", () => {
+      const result = buildKiroPayload("claude-sonnet-4.6-thinking", {
+        messages: [{ role: "user", content: "Think carefully" }]
+      }, true, {});
+
+      expect(result._kiroThinkingEnabled).toBe(true);
+      expect(result._kiroExposeReasoning).toBe(false);
+      expect(JSON.stringify(result)).not.toContain("_kiroExposeReasoning");
+    });
+
+    it("allows explicit opt-in for exposing Kiro reasoning", () => {
+      const result = buildKiroPayload("claude-sonnet-4.6-thinking", {
+        metadata: { kiro_expose_reasoning: true },
+        messages: [{ role: "user", content: "Think carefully" }]
+      }, true, {});
+
+      expect(result._kiroThinkingEnabled).toBe(true);
+      expect(result._kiroExposeReasoning).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("_kiroExposeReasoning");
+    });
+
+    it("lets an explicit disabled thinking config override model suffixes and reasoning_effort", () => {
+      const result = buildKiroPayload("claude-sonnet-4.6-thinking", {
+        thinking: { type: "disabled" },
+        reasoning_effort: "high",
+        messages: [{ role: "user", content: "No thinking stream" }]
+      }, true, {});
+
+      expect(result._kiroThinkingEnabled).toBe(false);
+      expect(result.conversationState.currentMessage.userInputMessage.content).not.toContain("<thinking_mode>");
+    });
   });
 });

@@ -11,6 +11,7 @@ import {
   Modal,
   Select,
   Toggle,
+  Pagination,
 } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
@@ -94,13 +95,37 @@ function getConnectionErrorTag(connection) {
   return "ERR";
 }
 
-const APIKEY_INITIAL_VISIBLE = 20;
+const PROVIDERS_DEFAULT_PAGE_SIZE = 20;
+const PROVIDERS_FETCH_TIMEOUT_MS = 8000;
+
+async function fetchJsonWithTimeout(url) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), PROVIDERS_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    return { response, data };
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 export default function ProvidersPage() {
   const [connections, setConnections] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showAllApikey, setShowAllApikey] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [apikeyPage, setApikeyPage] = useState(1);
+  const [apikeyPageSize, setApikeyPageSize] = useState(PROVIDERS_DEFAULT_PAGE_SIZE);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] =
     useState(false);
@@ -115,6 +140,10 @@ export default function ProvidersPage() {
     registerSearch("Search providers...");
     return () => unregisterSearch();
   }, [registerSearch, unregisterSearch]);
+
+  useEffect(() => {
+    setApikeyPage(1);
+  }, [searchQuery, apikeyPageSize]);
 
   const matchSearch = (name) =>
     !searchQuery.trim() ||
@@ -143,17 +172,28 @@ export default function ProvidersPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [connectionsRes, nodesRes] = await Promise.all([
-          fetch("/api/providers"),
-          fetch("/api/provider-nodes"),
+        setLoadError("");
+        const [connectionsResult, nodesResult] = await Promise.allSettled([
+          fetchJsonWithTimeout("/api/providers"),
+          fetchJsonWithTimeout("/api/provider-nodes"),
         ]);
-        const connectionsData = await connectionsRes.json();
-        const nodesData = await nodesRes.json();
-        if (connectionsRes.ok)
-          setConnections(connectionsData.connections || []);
-        if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+
+        if (connectionsResult.status === "fulfilled" && connectionsResult.value.response.ok) {
+          setConnections(connectionsResult.value.data?.connections || []);
+        } else {
+          setConnections([]);
+          setLoadError("Provider connection stats could not be loaded. The provider catalog is still available.");
+        }
+
+        if (nodesResult.status === "fulfilled" && nodesResult.value.response.ok) {
+          setProviderNodes(nodesResult.value.data?.nodes || []);
+        } else {
+          setProviderNodes([]);
+          setLoadError((current) => current || "Custom provider data could not be loaded. The provider catalog is still available.");
+        }
       } catch (error) {
         console.log("Error fetching data:", error);
+        setLoadError("Provider data could not be loaded. The provider catalog is still available.");
       } finally {
         setLoading(false);
       }
@@ -291,12 +331,12 @@ export default function ProvidersPage() {
     ),
     "apikey",
   );
-  const isApikeySearching = !!searchQuery.trim();
-  const visibleApikeyEntries =
-    isApikeySearching || showAllApikey
-      ? apikeyEntries
-      : apikeyEntries.slice(0, APIKEY_INITIAL_VISIBLE);
-  const hiddenApikeyCount = apikeyEntries.length - APIKEY_INITIAL_VISIBLE;
+  const totalApikeyPages = Math.max(1, Math.ceil(apikeyEntries.length / apikeyPageSize));
+  const activeApikeyPage = Math.min(apikeyPage, totalApikeyPages);
+  const visibleApikeyEntries = apikeyEntries.slice(
+    (activeApikeyPage - 1) * apikeyPageSize,
+    activeApikeyPage * apikeyPageSize
+  );
 
   if (loading) {
     return (
@@ -317,6 +357,12 @@ export default function ProvidersPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+      {loadError && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+          {loadError}
+        </div>
+      )}
+
       {!hasAnyResult && (
         <div className="text-center py-8 border border-dashed border-border rounded-xl">
           <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
@@ -511,14 +557,17 @@ export default function ProvidersPage() {
             />
           ))}
         </div>
-        {!isApikeySearching && !showAllApikey && hiddenApikeyCount > 0 && (
-          <button
-            onClick={() => setShowAllApikey(true)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2.5 text-sm font-medium text-primary transition-colors hover:border-primary hover:bg-primary/5"
-          >
-            <span className="material-symbols-outlined text-[16px]">expand_more</span>
-            Show all {apikeyEntries.length} providers
-          </button>
+        {apikeyEntries.length > 0 && (
+          <Pagination
+            currentPage={activeApikeyPage}
+            pageSize={apikeyPageSize}
+            totalItems={apikeyEntries.length}
+            onPageChange={setApikeyPage}
+            onPageSizeChange={(size) => {
+              setApikeyPageSize(size);
+              setApikeyPage(1);
+            }}
+          />
         )}
       </div>
       )}

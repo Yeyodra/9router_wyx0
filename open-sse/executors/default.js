@@ -5,6 +5,26 @@ import { buildClineHeaders } from "../../src/shared/utils/clineAuth.js";
 import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
+import { randomUUID } from "crypto";
+import { gzipSync } from "zlib";
+
+const CODEBUDDY_SYSTEM_PROMPT = "You are CodeBuddy Code.";
+const CODEBUDDY_MIN_OUTPUT_TOKENS = 16;
+
+function codeBuddyRequestId() {
+  return randomUUID().replace(/-/g, "");
+}
+
+function normalizeCodeBuddyMessages(messages) {
+  const next = Array.isArray(messages) ? messages.map((message) => ({ ...message })) : [];
+  if (next[0]?.role !== "system") {
+    next.unshift({ role: "system", content: CODEBUDDY_SYSTEM_PROMPT });
+  }
+  return next.map((message) => {
+    if (message.role !== "user" || typeof message.content !== "string") return message;
+    return { ...message, content: [{ type: "text", text: message.content }] };
+  });
+}
 
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
@@ -13,7 +33,30 @@ export class DefaultExecutor extends BaseExecutor {
 
   transformRequest(model, body) {
     const transformed = this.applyJsonSchemaFallback(body);
+    if (this.provider === "codebuddy") {
+      const maxTokens = Number(transformed.max_tokens);
+      const maxCompletionTokens = Number(transformed.max_completion_tokens);
+      return {
+        ...transformed,
+        model,
+        messages: normalizeCodeBuddyMessages(transformed.messages),
+        ...(Number.isFinite(maxTokens) && maxTokens > 0 && maxTokens < CODEBUDDY_MIN_OUTPUT_TOKENS
+          ? { max_tokens: CODEBUDDY_MIN_OUTPUT_TOKENS }
+          : {}),
+        ...(Number.isFinite(maxCompletionTokens) && maxCompletionTokens > 0 && maxCompletionTokens < CODEBUDDY_MIN_OUTPUT_TOKENS
+          ? { max_completion_tokens: CODEBUDDY_MIN_OUTPUT_TOKENS }
+          : {}),
+        stream: true,
+      };
+    }
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
+  }
+
+  prepareRequestBody(transformedBody, headers) {
+    const bodyStr = JSON.stringify(transformedBody);
+    if (this.provider !== "codebuddy") return bodyStr;
+    headers["Content-Encoding"] = "gzip";
+    return gzipSync(bodyStr);
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.
@@ -135,7 +178,23 @@ export class DefaultExecutor extends BaseExecutor {
           // GitLab Duo uses Bearer token (PAT with ai_features scope, or OAuth access token)
           headers["Authorization"] = `Bearer ${credentials.apiKey || credentials.accessToken}`;
         } else if (this.provider === "codebuddy") {
+          const requestId = codeBuddyRequestId();
+          const conversationId = codeBuddyRequestId();
           headers["Authorization"] = `Bearer ${credentials.apiKey || credentials.accessToken}`;
+          headers["Accept"] = "text/event-stream";
+          headers["Content-Type"] = "application/json; charset=utf-8";
+          headers["User-Agent"] = "CLI/2.105.2 CodeBuddy/2.105.2";
+          headers["X-Requested-With"] = "XMLHttpRequest";
+          headers["X-Domain"] = credentials.providerSpecificData?.domain || "www.codebuddy.ai";
+          headers["X-Request-ID"] = requestId;
+          headers["X-Conversation-ID"] = conversationId;
+          headers["X-Conversation-Request-ID"] = conversationId;
+          headers["X-Conversation-Message-ID"] = requestId;
+          headers["X-Agent-Intent"] = "craft";
+          headers["X-IDE-Type"] = "CLI";
+          headers["X-IDE-Name"] = "CLI";
+          headers["X-IDE-Version"] = "2.105.2";
+          headers["X-Private-Data"] = "false";
         } else if (this.provider === "kilocode") {
           headers["Authorization"] = `Bearer ${credentials.apiKey || credentials.accessToken}`;
           if (credentials.providerSpecificData?.orgId) {
@@ -193,6 +252,7 @@ export class DefaultExecutor extends BaseExecutor {
       iflow: () => this.refreshIflow(credentials.refreshToken, proxyOptions),
       gemini: () => this.refreshGoogle(credentials.refreshToken, proxyOptions),
       kiro: () => this.refreshKiro(credentials.refreshToken, proxyOptions),
+      codebuddy: () => this.refreshCodeBuddy(credentials.refreshToken, proxyOptions),
       cline: () => this.refreshCline(credentials.refreshToken, proxyOptions),
       "kimi-coding": () => this.refreshKimiCoding(credentials.refreshToken, proxyOptions),
       kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions)
@@ -265,6 +325,33 @@ export class DefaultExecutor extends BaseExecutor {
     if (!response.ok) return null;
     const tokens = await response.json();
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken || refreshToken, expiresIn: tokens.expiresIn };
+  }
+
+  async refreshCodeBuddy(refreshToken, proxyOptions = null) {
+    const response = await proxyAwareFetch(PROVIDERS.codebuddy.refreshUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "CLI/2.63.2 CodeBuddy/2.63.2",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Domain": "www.codebuddy.ai",
+        "X-Refresh-Token": refreshToken,
+        "X-Auth-Refresh-Source": "plugin",
+        "X-Product": "SaaS",
+      },
+      body: "{}"
+    }, proxyOptions);
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const data = payload?.data || payload;
+    const accessToken = data?.accessToken || data?.access_token;
+    if (!accessToken) return null;
+    return {
+      accessToken,
+      refreshToken: data?.refreshToken || data?.refresh_token || refreshToken,
+      expiresIn: data?.expiresIn || data?.expires_in || 86400,
+    };
   }
 
   async refreshCline(refreshToken, proxyOptions = null) {

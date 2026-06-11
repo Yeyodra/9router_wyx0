@@ -9,6 +9,7 @@ import { getProviderConnections, getCombos, getCustomModels, getModelAliases } f
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
+import { buildCodexGatewayModelEntries } from "@/sse/services/codexGateway.js";
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
@@ -400,6 +401,10 @@ export async function buildModelsList(kindFilter) {
         });
       }
     }
+  }
+
+  if (kindFilter.includes(LLM_KIND)) {
+    models.push(...buildCodexGatewayModelEntries(connections));
   }
 
   const dedupedModels = [];

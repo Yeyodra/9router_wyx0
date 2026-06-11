@@ -17,6 +17,7 @@ import {
   CLAUDE_CONFIG,
   CLINE_CONFIG,
   KILOCODE_CONFIG,
+  CODEBUDDY_CONFIG,
 } from "@/lib/oauth/constants/oauth";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
 
@@ -208,6 +209,33 @@ async function refreshOAuthToken(connection) {
         accessToken: data?.accessToken,
         expiresIn,
         refreshToken: data?.refreshToken || refreshToken,
+      };
+    }
+
+    if (provider === "codebuddy") {
+      const response = await fetch(CODEBUDDY_CONFIG.refreshUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": CODEBUDDY_CONFIG.userAgent,
+          "X-Requested-With": "XMLHttpRequest",
+          "X-Domain": CODEBUDDY_CONFIG.domain,
+          "X-Refresh-Token": refreshToken,
+          "X-Auth-Refresh-Source": "plugin",
+          "X-Product": "SaaS",
+        },
+        body: "{}",
+      });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      const data = payload?.data || payload;
+      const accessToken = data?.accessToken || data?.access_token;
+      if (!accessToken) return null;
+      return {
+        accessToken,
+        expiresIn: data?.expiresIn || data?.expires_in || 86400,
+        refreshToken: data?.refreshToken || data?.refresh_token || refreshToken,
       };
     }
 

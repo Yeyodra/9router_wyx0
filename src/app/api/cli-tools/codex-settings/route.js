@@ -139,6 +139,7 @@ export async function POST(request) {
       name: "9Router",
       base_url: normalizedBaseUrl,
       wire_api: "responses",
+      requires_openai_auth: true,
     });
 
     // Add subagent configuration

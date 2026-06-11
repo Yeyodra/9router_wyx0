@@ -277,6 +277,52 @@ export async function refreshQwenToken(refreshToken, log) {
   }, log);
 }
 
+export async function refreshCodeBuddyToken(refreshToken, log) {
+  if (!refreshToken) return null;
+  return dedupRefresh("codebuddy", refreshToken, async () => {
+    try {
+      const response = await proxyAwareFetch(PROVIDERS.codebuddy.refreshUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": "CLI/2.63.2 CodeBuddy/2.63.2",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-Domain": "www.codebuddy.ai",
+          "X-Refresh-Token": refreshToken,
+          "X-Auth-Refresh-Source": "plugin",
+          "X-Product": "SaaS",
+        },
+        body: "{}",
+      });
+
+      if (!response.ok) {
+        log?.error?.("TOKEN_REFRESH", "Failed to refresh token for codebuddy", {
+          status: response.status,
+          error: await response.text().catch(() => ""),
+        });
+        return null;
+      }
+
+      const payload = await response.json();
+      const data = payload?.data || payload;
+      const accessToken = data?.accessToken || data?.access_token;
+      if (!accessToken) return null;
+
+      return {
+        accessToken,
+        refreshToken: data?.refreshToken || data?.refresh_token || refreshToken,
+        expiresIn: data?.expiresIn || data?.expires_in || 86400,
+      };
+    } catch (error) {
+      log?.error?.("TOKEN_REFRESH", "Error refreshing token for codebuddy", {
+        error: error.message,
+      });
+      return null;
+    }
+  }, log);
+}
+
 export function classifyOAuthRefreshError(errorText = "", status = 0) {
   let parsed = null;
   try {
@@ -636,6 +682,9 @@ async function _getAccessTokenInternal(provider, credentials, log) {
     case "qwen":
       return await refreshQwenToken(credentials.refreshToken, log);
 
+    case "codebuddy":
+      return await refreshCodeBuddyToken(credentials.refreshToken, log);
+
     case "iflow":
       return await refreshIflowToken(credentials.refreshToken, log);
 
@@ -686,6 +735,8 @@ export async function refreshTokenByProvider(provider, credentials, log) {
       return refreshCodexToken(credentials.refreshToken, log);
     case "qwen":
       return refreshQwenToken(credentials.refreshToken, log);
+    case "codebuddy":
+      return refreshCodeBuddyToken(credentials.refreshToken, log);
     case "iflow":
       return refreshIflowToken(credentials.refreshToken, log);
     case "github":

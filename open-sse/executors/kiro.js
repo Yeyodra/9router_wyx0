@@ -69,7 +69,7 @@ export class KiroExecutor extends BaseExecutor {
       // Success - transform and return
       // For Kiro, we need to transform the binary EventStream to SSE
       // Create a TransformStream to convert binary to SSE text
-      const transformedResponse = this.transformEventStreamToSSE(response, model);
+      const transformedResponse = this.transformEventStreamToSSE(response, model, transformedBody);
       return { response: transformedResponse, url, headers, transformedBody };
     }
   }
@@ -78,11 +78,12 @@ export class KiroExecutor extends BaseExecutor {
    * Transform AWS EventStream binary response to SSE text stream
    * Using TransformStream instead of ReadableStream.pull() to avoid Workers timeout
    */
-  transformEventStreamToSSE(response, model) {
+  transformEventStreamToSSE(response, model, requestBody = null) {
     let buffer = new Uint8Array(0);
     let chunkIndex = 0;
     const responseId = `chatcmpl-${Date.now()}`;
     const created = Math.floor(Date.now() / 1000);
+    const exposeReasoning = requestBody?._kiroExposeReasoning === true;
     const state = {
       endDetected: false,
       finishEmitted: false,
@@ -158,6 +159,10 @@ export class KiroExecutor extends BaseExecutor {
             if (reasoningText) {
               state.hasReasoningContent = true;
               state.totalContentLength += reasoningText.length;
+
+              if (!exposeReasoning) {
+                continue;
+              }
 
               const reasoningDelta = state.reasoningChunkCount === 0 && chunkIndex === 0
                 ? { role: "assistant", reasoning_content: reasoningText }

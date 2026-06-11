@@ -19,6 +19,7 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { getCodexConnectionLabel, resolveCodexGatewayConnection } from "../services/codexGateway.js";
 
 /**
  * Handle chat completion request
@@ -147,6 +148,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   }
 
   const { provider, model } = modelInfo;
+  const gateway = modelInfo.gateway || null;
 
   // Log model routing (alias → actual model)
   if (modelStr !== `${provider}/${model}`) {
@@ -162,9 +164,22 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  const credentialOptions = {};
+
+  if (gateway && provider === "codex" && (gateway.mode === "original" || gateway.mode === "account")) {
+    const pinnedConnection = await resolveCodexGatewayConnection(gateway);
+    if (!pinnedConnection) {
+      const ref = gateway.mode === "account" ? `account "${gateway.accountRef}"` : "original Codex account";
+      log.warn("AUTH", `Codex gateway could not resolve ${ref}`);
+      return errorResponse(HTTP_STATUS.NOT_FOUND, `Codex gateway could not resolve ${ref}`);
+    }
+    credentialOptions.preferredConnectionId = pinnedConnection.id;
+    credentialOptions.strictPreferred = !!gateway.strictAccount;
+    log.info("ROUTING", `Codex gateway ${gateway.mode} pinned to ${getCodexConnectionLabel(pinnedConnection)}`);
+  }
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, credentialOptions);
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

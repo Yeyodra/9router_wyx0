@@ -246,13 +246,16 @@ export const GITLAB_CONFIG = {
 // CodeBuddy (Tencent) OAuth Configuration (Browser OAuth Polling Flow)
 // Step 1: POST /v2/plugin/auth/state?platform=CLI → get { state, authUrl }
 // Step 2: Open authUrl in browser
-// Step 3: Poll POST /v2/plugin/auth/token with state until success
+// Step 3: Poll GET /v2/plugin/auth/token?state=... until success
 export const CODEBUDDY_CONFIG = {
-  baseUrl: "https://copilot.tencent.com",
-  stateUrl: "https://copilot.tencent.com/v2/plugin/auth/state",
-  tokenUrl: "https://copilot.tencent.com/v2/plugin/auth/token",
-  refreshUrl: "https://copilot.tencent.com/v2/plugin/auth/token/refresh",
+  baseUrl: "https://www.codebuddy.ai",
+  stateUrl: "https://www.codebuddy.ai/v2/plugin/auth/state",
+  tokenUrl: "https://www.codebuddy.ai/v2/plugin/auth/token",
+  accountUrl: "https://www.codebuddy.ai/v2/plugin/login/account",
+  accountsUrl: "https://www.codebuddy.ai/v2/plugin/accounts",
+  refreshUrl: "https://www.codebuddy.ai/v2/plugin/auth/token/refresh",
   userAgent: "CLI/2.63.2 CodeBuddy/2.63.2",
+  domain: "www.codebuddy.ai",
   platform: "CLI",
   pollInterval: 5000,
 };

@@ -1,6 +1,7 @@
 // Re-export from open-sse with localDb integration
 import { getModelAliases, getComboByName, getProviderNodes } from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
+import { parseCodexGatewayModel } from "./codexGateway.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -28,6 +29,21 @@ export async function resolveModelAlias(alias) {
  * Get full model info (parse or resolve)
  */
 export async function getModelInfo(modelStr) {
+  const gateway = parseCodexGatewayModel(modelStr);
+  if (gateway) {
+    const resolved = await getModelInfo(gateway.modelString);
+    return {
+      ...resolved,
+      gateway: {
+        mode: gateway.mode,
+        accountRef: gateway.accountRef || null,
+        strictAccount: !!gateway.strictAccount,
+        requestedModel: modelStr,
+        modelString: gateway.modelString,
+      },
+    };
+  }
+
   const parsed = parseModel(modelStr);
 
   if (!parsed.isAlias) {

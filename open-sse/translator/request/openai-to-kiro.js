@@ -9,8 +9,64 @@ import {
   resolveKiroModel,
   isThinkingEnabled,
   buildThinkingSystemPrefix,
-  KIRO_AGENTIC_SYSTEM_PROMPT
+  KIRO_AGENTIC_SYSTEM_PROMPT,
+  shouldExposeKiroReasoning
 } from "../../config/kiroConstants.js";
+
+const KIRO_TOOL_DESCRIPTION_MAX_CHARS = 4096;
+const KIRO_TOOL_DESCRIPTION_TIGHT_CHARS = 1024;
+const KIRO_TOOL_DESCRIPTION_MIN_CHARS = 256;
+const KIRO_TOOLS_JSON_BUDGET_CHARS = 256 * 1024;
+
+function truncateText(text, maxChars) {
+  if (typeof text !== "string" || text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n\n[truncated for Kiro payload limit]`;
+}
+
+function normalizeToolDescription(description, name, maxChars = KIRO_TOOL_DESCRIPTION_MAX_CHARS) {
+  const raw = typeof description === "string" && description.trim()
+    ? description
+    : `Tool: ${name}`;
+  return truncateText(raw, maxChars);
+}
+
+function mapToolToKiroSpec(t) {
+  const name = t.function?.name || t.name;
+  const description = normalizeToolDescription(t.function?.description || t.description || "", name);
+  const schema = t.function?.parameters || t.parameters || t.input_schema || {};
+  // Normalize schema: Kiro requires required[] and proper type/properties
+  const normalizedSchema = Object.keys(schema).length === 0
+    ? { type: "object", properties: {}, required: [] }
+    : { ...schema, required: schema.required ?? [] };
+
+  return {
+    toolSpecification: {
+      name,
+      description,
+      inputSchema: { json: normalizedSchema }
+    }
+  };
+}
+
+function resizeToolDescriptions(tools, maxChars) {
+  return tools.map(tool => ({
+    ...tool,
+    toolSpecification: {
+      ...tool.toolSpecification,
+      description: normalizeToolDescription(tool.toolSpecification?.description || "", tool.toolSpecification?.name, maxChars)
+    }
+  }));
+}
+
+function fitKiroToolsToPayloadBudget(tools) {
+  if (JSON.stringify(tools).length <= KIRO_TOOLS_JSON_BUDGET_CHARS) return tools;
+
+  let resized = resizeToolDescriptions(tools, KIRO_TOOL_DESCRIPTION_TIGHT_CHARS);
+  if (JSON.stringify(resized).length <= KIRO_TOOLS_JSON_BUDGET_CHARS) return resized;
+
+  resized = resizeToolDescriptions(tools, KIRO_TOOL_DESCRIPTION_MIN_CHARS);
+  return resized;
+}
 
 /** Render a single tool call as a readable text line. */
 function toolCallToText(name, input) {
@@ -218,28 +274,9 @@ function convertMessages(messages, tools, model) {
         if (!userMsg.userInputMessage.userInputMessageContext) {
           userMsg.userInputMessage.userInputMessageContext = {};
         }
-        userMsg.userInputMessage.userInputMessageContext.tools = tools.map(t => {
-          const name = t.function?.name || t.name;
-          let description = t.function?.description || t.description || "";
-
-          if (!description.trim()) {
-            description = `Tool: ${name}`;
-          }
-
-          const schema = t.function?.parameters || t.parameters || t.input_schema || {};
-          // Normalize schema: Kiro requires required[] and proper type/properties
-          const normalizedSchema = Object.keys(schema).length === 0
-            ? { type: "object", properties: {}, required: [] }
-            : { ...schema, required: schema.required ?? [] };
-
-          return {
-            toolSpecification: {
-              name,
-              description,
-              inputSchema: { json: normalizedSchema }
-            }
-          };
-        });
+        userMsg.userInputMessage.userInputMessageContext.tools = fitKiroToolsToPayloadBudget(
+          tools.map(mapToolToKiroSpec)
+        );
         toolsInjectedToFirstUserMsg = true;
       }
 
@@ -515,8 +552,9 @@ export function buildKiroPayload(model, body, stream, credentials) {
   const temperature = body.temperature;
   const topP = body.top_p;
 
-  const { upstream: upstreamModel, agentic, thinking: modelImpliesThinking } = resolveKiroModel(model);
-  const thinkingEnabled = modelImpliesThinking || isThinkingEnabled(body, null, model);
+  const { upstream: upstreamModel, agentic } = resolveKiroModel(model);
+  const thinkingEnabled = isThinkingEnabled(body, null, model);
+  const exposeReasoning = shouldExposeKiroReasoning(body);
 
   const { history, currentMessage } = convertMessages(messages, tools, upstreamModel);
 
@@ -574,6 +612,14 @@ export function buildKiroPayload(model, body, stream, credentials) {
   // Tag payload so the executor can route the upstream model id correctly.
   Object.defineProperty(payload, "_kiroUpstreamModel", {
     value: upstreamModel,
+    enumerable: false
+  });
+  Object.defineProperty(payload, "_kiroThinkingEnabled", {
+    value: thinkingEnabled,
+    enumerable: false
+  });
+  Object.defineProperty(payload, "_kiroExposeReasoning", {
+    value: exposeReasoning,
     enumerable: false
   });
 

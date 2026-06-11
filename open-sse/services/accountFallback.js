@@ -1,5 +1,28 @@
 import { ERROR_RULES, BACKOFF_CONFIG, TRANSIENT_COOLDOWN_MS } from "../config/errorConfig.js";
 
+const NON_ACCOUNT_ERROR_TEXTS = [
+  "content_length_exceeds_threshold",
+  "input is too long",
+  "maximum context length",
+  "context length exceeds",
+  "prompt is too long",
+  "request too large",
+  "improperly formed request",
+];
+
+/**
+ * Errors caused by the request payload itself should not rotate accounts.
+ * Retrying the same oversized payload with another credential only amplifies
+ * logs and temporarily locks healthy accounts.
+ */
+export function isNonAccountError(status, errorText) {
+  if (status === 413) return true;
+  const lowerError = errorText
+    ? (typeof errorText === "string" ? errorText : JSON.stringify(errorText)).toLowerCase()
+    : "";
+  return status === 400 && NON_ACCOUNT_ERROR_TEXTS.some(text => lowerError.includes(text));
+}
+
 /**
  * Calculate exponential backoff cooldown for rate limits (429)
  * Level 1: 1s, Level 2: 2s, Level 3: 4s... → max 4 min

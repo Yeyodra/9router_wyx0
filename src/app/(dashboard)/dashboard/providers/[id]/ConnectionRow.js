@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { Badge, Toggle } from "@/shared/components";
+import { classifyConnectionStatus, getStatusBadgeVariant } from "@/shared/utils/connectionStatus";
 import CooldownTimer from "./CooldownTimer";
 
 export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null }) {
@@ -106,9 +107,12 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
   const effectiveStatus = (connection.testStatus === "unavailable" && !isCooldown)
     ? "active"  // Cooldown expired u2192 treat as active
     : connection.testStatus;
+  const classifiedStatus = classifyConnectionStatus(connection);
 
   const getStatusVariant = () => {
     if (connection.isActive === false) return "default";
+    const classifiedVariant = getStatusBadgeVariant(classifiedStatus);
+    if (classifiedStatus.key !== "active") return classifiedVariant;
     if (effectiveStatus === "active" || effectiveStatus === "success") return "success";
     if (effectiveStatus === "error" || effectiveStatus === "expired" || effectiveStatus === "unavailable") return "error";
     return "default";
@@ -158,7 +162,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
           <p className="text-sm font-medium truncate">{displayName}</p>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
             <Badge variant={getStatusVariant()} size="sm" dot>
-              {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
+              {classifiedStatus.label || effectiveStatus || "unknown"}
             </Badge>
             <Badge variant="default" size="sm">
               {authLabel}

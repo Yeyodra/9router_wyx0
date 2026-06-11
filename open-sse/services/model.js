@@ -16,6 +16,8 @@ const ALIAS_TO_PROVIDER_ID = {
   ocg: "opencode-go",
   qd: "qoder",
   qoder: "qoder",
+  cb: "codebuddy",
+  codebuddy: "codebuddy",
   // TTS providers
   el: "elevenlabs",
   // API Key providers

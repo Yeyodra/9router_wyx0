@@ -7,7 +7,10 @@ import Toggle from "@/shared/components/Toggle";
 import { parseQuotaData, calculatePercentage } from "./utils";
 import Card from "@/shared/components/Card";
 import { EditConnectionModal } from "@/shared/components";
-import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import {
+  AI_PROVIDERS,
+  USAGE_SUPPORTED_PROVIDERS,
+} from "@/shared/constants/providers";
 
 function getConnectionLabel(connection) {
   const isEmail = (value) =>
@@ -22,6 +25,96 @@ function getConnectionQuotaRemaining(connection, quotaData) {
   if (!quota) return Number.POSITIVE_INFINITY;
   if (typeof quota.remaining === "number") return quota.remaining;
   return Number.POSITIVE_INFINITY;
+}
+
+function mergeQuotaRows(rows = []) {
+  const merged = new Map();
+
+  rows.forEach((quota) => {
+    if (!quota?.name) return;
+
+    const current = merged.get(quota.name) || {
+      name: quota.name,
+      used: 0,
+      total: 0,
+      resetAt: quota.resetAt || null,
+    };
+
+    current.used += Number(quota.used) || 0;
+    current.total += Number(quota.total) || 0;
+
+    if (quota.resetAt) {
+      if (!current.resetAt || new Date(quota.resetAt).getTime() < new Date(current.resetAt).getTime()) {
+        current.resetAt = quota.resetAt;
+      }
+    }
+
+    merged.set(quota.name, current);
+  });
+
+  return [...merged.values()];
+}
+
+function getProviderDisplayName(provider) {
+  return AI_PROVIDERS[provider]?.name || provider;
+}
+
+function buildProviderAggregateCard(provider, providerConnections, quotaData, loading, errors) {
+  if (!providerConnections.length) return null;
+  const allQuotas = [];
+  const errorMessages = [];
+  let message = null;
+  let isLoading = false;
+
+  providerConnections.forEach((connection) => {
+    const quotaEntry = quotaData[connection.id];
+    if (Array.isArray(quotaEntry?.quotas)) {
+      allQuotas.push(...quotaEntry.quotas);
+    }
+    if (quotaEntry?.message && !message) {
+      message = quotaEntry.message;
+    }
+    if (errors[connection.id]) {
+      errorMessages.push(errors[connection.id]);
+    }
+    if (loading[connection.id]) {
+      isLoading = true;
+    }
+  });
+
+  return {
+    id: `${provider}-aggregate`,
+    provider,
+    name: getProviderDisplayName(provider),
+    email: `${providerConnections.length} accounts`,
+    isActive: providerConnections.some((connection) => connection.isActive ?? true),
+    isAggregate: true,
+    quota: {
+      quotas: mergeQuotaRows(allQuotas),
+      message: allQuotas.length === 0 ? (message || null) : null,
+    },
+    isLoading,
+    error: !allQuotas.length && errorMessages.length > 0 ? errorMessages[0] : null,
+    connectionIds: providerConnections.map((connection) => connection.id),
+  };
+}
+
+function buildProviderAggregateCards(connections, quotaData, loading, errors) {
+  const groups = new Map();
+
+  connections.forEach((connection) => {
+    if (!connection.provider) return;
+    if (!groups.has(connection.provider)) {
+      groups.set(connection.provider, []);
+    }
+    groups.get(connection.provider).push(connection);
+  });
+
+  return [...groups.entries()]
+    .map(([provider, providerConnections]) =>
+      buildProviderAggregateCard(provider, providerConnections, quotaData, loading, errors),
+    )
+    .filter(Boolean);
 }
 
 function sortVisibleConnections(
@@ -211,6 +304,10 @@ const ACCOUNT_FILTER_OPTIONS = [
   { value: "active", label: "Active" },
   { value: "inactive", label: "Turned off" },
 ];
+const QUOTA_DISPLAY_MODE_OPTIONS = [
+  { value: "single", label: "Satuan", icon: "account_circle" },
+  { value: "bulk", label: "Bulk", icon: "stacks" },
+];
 const QUOTA_SORT_OPTIONS = [
   { value: "default", label: "Default quota order" },
   { value: "remaining-asc", label: "% quota: low to high" },
@@ -238,6 +335,7 @@ export default function ProviderLimits() {
   const [proxyPools, setProxyPools] = useState([]);
   const [providerFilter, setProviderFilter] = useState("all");
   const [providerOptions, setProviderOptions] = useState([]);
+  const [displayMode, setDisplayMode] = useState("single");
   const [accountFilter, setAccountFilter] = useState("all");
   const [quotaSortMode, setQuotaSortMode] = useState("default");
   const [expiringFirst, setExpiringFirst] = useState(false);
@@ -301,7 +399,7 @@ export default function ProviderLimits() {
         return [];
       }
     },
-    [accountFilter, expiringFirst, page, pageSize, providerFilter],
+    [accountFilter, page, pageSize, providerFilter],
   );
 
   // Fetch quota for a specific connection
@@ -385,6 +483,21 @@ export default function ProviderLimits() {
   const refreshProvider = useCallback(
     async (connectionId, provider) => {
       await fetchQuota(connectionId, provider);
+      setLastUpdated(new Date());
+    },
+    [fetchQuota],
+  );
+
+  const refreshAggregate = useCallback(
+    async (connectionIds, provider) => {
+      if (!connectionIds?.length) return;
+
+      setLoading((prev) => ({
+        ...prev,
+        ...Object.fromEntries(connectionIds.map((id) => [id, true])),
+      }));
+
+      await Promise.all(connectionIds.map((id) => fetchQuota(id, provider)));
       setLastUpdated(new Date());
     },
     [fetchQuota],
@@ -643,6 +756,16 @@ export default function ProviderLimits() {
     [connections, quotaData, expiringFirst, providerFilter, quotaSortMode],
   );
 
+  const providerAggregateCards = useMemo(
+    () => buildProviderAggregateCards(sortedConnections, quotaData, loading, errors),
+    [sortedConnections, quotaData, loading, errors],
+  );
+
+  const renderedConnections = useMemo(() => {
+    if (displayMode === "bulk") return providerAggregateCards;
+    return sortedConnections;
+  }, [displayMode, providerAggregateCards, sortedConnections]);
+
   // Connection is depleted when any quota entry hit the threshold
   const isConnectionDepleted = (conn) => {
     const quotas = quotaData[conn.id]?.quotas;
@@ -694,7 +817,7 @@ export default function ProviderLimits() {
   const selectedProviderLabel =
     providerFilter === "all" ? "All providers" : providerFilter;
   const hasEligibleConnections = totals.eligibleConnections > 0;
-  const hasVisibleConnections = sortedConnections.length > 0;
+  const hasVisibleConnections = renderedConnections.length > 0;
   const emptyState = getConnectionsEmptyMessage(
     totals,
     providerFilter,
@@ -845,6 +968,23 @@ export default function ProviderLimits() {
               </>
             )}
           </div>
+          <div className="inline-flex h-8 overflow-hidden rounded-lg border border-black/10 bg-black/[0.02] dark:border-white/10 dark:bg-white/[0.03]">
+            {QUOTA_DISPLAY_MODE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setDisplayMode(option.value)}
+                aria-pressed={displayMode === option.value}
+                className={`flex h-full items-center gap-1.5 px-2 text-xs transition-colors ${displayMode === option.value ? "bg-primary text-white" : "text-text-primary hover:bg-black/5 dark:hover:bg-white/10"}`}
+                title={`Show quota in ${option.label} mode`}
+              >
+                <span className="material-symbols-outlined text-[14px]">
+                  {option.icon}
+                </span>
+                <span className="hidden sm:inline">{option.label}</span>
+              </button>
+            ))}
+          </div>
           <select
             value={accountFilter}
             onChange={(event) => {
@@ -967,14 +1107,15 @@ export default function ProviderLimits() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {sortedConnections.map((conn) => {
-          const quota = quotaData[conn.id];
-          const isLoading = loading[conn.id];
-          const error = errors[conn.id];
+        {renderedConnections.map((conn) => {
+          const isAggregate = conn.isAggregate === true;
+          const quota = isAggregate ? conn.quota : quotaData[conn.id];
+          const isLoading = isAggregate ? conn.isLoading : loading[conn.id];
+          const error = isAggregate ? conn.error : errors[conn.id];
 
           // Use table layout for all providers
           const isInactive = conn.isActive === false;
-          const rowBusy = deletingId === conn.id || togglingId === conn.id;
+          const rowBusy = isAggregate ? false : deletingId === conn.id || togglingId === conn.id;
 
           return (
             <Card
@@ -998,7 +1139,7 @@ export default function ProviderLimits() {
                     </div>
                     <div className="min-w-0">
                       <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
-                        {conn.provider}
+                        {conn.name || getProviderDisplayName(conn.provider)}
                       </h3>
                       {getConnectionLabel(conn) ? (
                         <p className="text-xs text-text-muted truncate">
@@ -1011,7 +1152,11 @@ export default function ProviderLimits() {
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => refreshProvider(conn.id, conn.provider)}
+                      onClick={() => (
+                        isAggregate
+                          ? refreshAggregate(conn.connectionIds, conn.provider)
+                          : refreshProvider(conn.id, conn.provider)
+                      )}
                       disabled={isLoading || rowBusy}
                       aria-label="Refresh quota"
                       className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
@@ -1023,52 +1168,56 @@ export default function ProviderLimits() {
                         refresh
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedConnection(conn);
-                        setShowEditModal(true);
-                      }}
-                      disabled={rowBusy}
-                      aria-label="Edit connection"
-                      className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
-                      title="Edit connection"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">
-                        edit
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteConnection(conn.id)}
-                      disabled={rowBusy}
-                      aria-label="Delete connection"
-                      className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-colors disabled:opacity-50"
-                      title="Delete connection"
-                    >
-                      <span
-                        className={`material-symbols-outlined text-[18px] ${deletingId === conn.id ? "animate-pulse" : ""}`}
-                      >
-                        delete
-                      </span>
-                    </button>
-                    <div
-                      className="inline-flex items-center pl-0.5"
-                      title={
-                        (conn.isActive ?? true)
-                          ? "Disable connection"
-                          : "Enable connection"
-                      }
-                    >
-                      <Toggle
-                        size="sm"
-                        checked={conn.isActive ?? true}
-                        disabled={rowBusy}
-                        onChange={(nextActive) =>
-                          handleToggleConnectionActive(conn.id, nextActive)
-                        }
-                      />
-                    </div>
+                    {!isAggregate && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedConnection(conn);
+                            setShowEditModal(true);
+                          }}
+                          disabled={rowBusy}
+                          aria-label="Edit connection"
+                          className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
+                          title="Edit connection"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">
+                            edit
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteConnection(conn.id)}
+                          disabled={rowBusy}
+                          aria-label="Delete connection"
+                          className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-colors disabled:opacity-50"
+                          title="Delete connection"
+                        >
+                          <span
+                            className={`material-symbols-outlined text-[18px] ${deletingId === conn.id ? "animate-pulse" : ""}`}
+                          >
+                            delete
+                          </span>
+                        </button>
+                        <div
+                          className="inline-flex items-center pl-0.5"
+                          title={
+                            (conn.isActive ?? true)
+                              ? "Disable connection"
+                              : "Enable connection"
+                          }
+                        >
+                          <Toggle
+                            size="sm"
+                            checked={conn.isActive ?? true}
+                            disabled={rowBusy}
+                            onChange={(nextActive) =>
+                              handleToggleConnectionActive(conn.id, nextActive)
+                            }
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

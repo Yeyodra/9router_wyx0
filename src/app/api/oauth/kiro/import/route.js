@@ -1,53 +1,107 @@
 import { NextResponse } from "next/server";
-import { KiroService } from "@/lib/oauth/services/kiro";
-import { createProviderConnection } from "@/models";
+import { getKiroBulkImportManager, parseKiroBulkAccounts } from "@/lib/oauth/services/kiroBulkImportManager";
+import { validateAndSaveKiroImportedToken } from "@/lib/oauth/services/kiroConnections";
 
 /**
  * POST /api/oauth/kiro/import
- * Import and validate refresh token from Kiro IDE
+ * Import and validate Kiro credentials.
+ * Supported today:
+ * - single/bulk refresh token import
+ *
+ * Reserved for future work:
+ * - bulk account credential import (email|password)
  */
 export async function POST(request) {
   try {
-    const { refreshToken } = await request.json();
+    const body = await request.json();
+    const mode = body?.mode === "account" ? "account" : "token";
 
-    if (!refreshToken || typeof refreshToken !== "string") {
+    if (mode === "account") {
+      const accounts = Array.isArray(body?.accounts) ? body.accounts : [];
+      const { parsed, invalidLines } = parseKiroBulkAccounts(accounts);
+      if (!parsed.length) {
+        return NextResponse.json(
+          { error: "At least one account entry is required" },
+          { status: 400 }
+        );
+      }
+
+      if (invalidLines.length > 0) {
+        return NextResponse.json(
+          {
+            error: "Invalid account format. Use one account per line: gmail@example.com|password",
+            invalidLines,
+          },
+          { status: 400 }
+        );
+      }
+
+      const manager = getKiroBulkImportManager();
+      const job = manager.startJob({
+        accounts,
+        concurrency: body?.concurrency,
+      });
+
+      return NextResponse.json({
+        success: true,
+        job,
+      });
+    }
+
+    const singleRefreshToken = typeof body?.refreshToken === "string"
+      ? body.refreshToken.trim()
+      : "";
+    const bulkRefreshTokens = Array.isArray(body?.refreshTokens)
+      ? body.refreshTokens.map((token) => String(token || "").trim()).filter(Boolean)
+      : [];
+    const refreshTokens = bulkRefreshTokens.length > 0
+      ? bulkRefreshTokens
+      : (singleRefreshToken ? [singleRefreshToken] : []);
+
+    if (!refreshTokens.length) {
       return NextResponse.json(
         { error: "Refresh token is required" },
         { status: 400 }
       );
     }
 
-    const kiroService = new KiroService();
+    const importedConnections = [];
+    const failed = [];
 
-    // Validate and refresh token
-    const tokenData = await kiroService.validateImportToken(refreshToken.trim());
+    for (let index = 0; index < refreshTokens.length; index += 1) {
+      const refreshToken = refreshTokens[index];
 
-    // Extract email from JWT if available
-    const email = kiroService.extractEmailFromJWT(tokenData.accessToken);
+      try {
+        const { connection } = await validateAndSaveKiroImportedToken(refreshToken);
+        importedConnections.push(connection);
+      } catch (error) {
+        failed.push({
+          line: bulkRefreshTokens.length > 0 ? index + 1 : 1,
+          error: error.message,
+        });
+      }
+    }
 
-    // Save to database
-    const connection = await createProviderConnection({
-      provider: "kiro",
-      authType: "oauth",
-      accessToken: tokenData.accessToken,
-      refreshToken: tokenData.refreshToken,
-      expiresAt: new Date(Date.now() + tokenData.expiresIn * 1000).toISOString(),
-      email: email || null,
-      providerSpecificData: {
-        profileArn: tokenData.profileArn,
-        authMethod: "imported",
-        provider: "Imported",
-      },
-      testStatus: "active",
-    });
+    if (!importedConnections.length) {
+      return NextResponse.json(
+        { error: failed[0]?.error || "Import failed", failed },
+        { status: 400 }
+      );
+    }
+
+    if (bulkRefreshTokens.length > 0) {
+      return NextResponse.json({
+        success: true,
+        imported: importedConnections.length,
+        failed: failed.length,
+        connections: importedConnections,
+        failures: failed,
+      });
+    }
 
     return NextResponse.json({
       success: true,
-      connection: {
-        id: connection.id,
-        provider: connection.provider,
-        email: connection.email,
-      },
+      connection: importedConnections[0],
     });
   } catch (error) {
     console.log("Kiro import token error:", error);

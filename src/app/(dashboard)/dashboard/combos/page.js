@@ -5,12 +5,13 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
-import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, Toggle, ConfirmModal } from "@/shared/components";
+import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, Toggle, ConfirmModal, Pagination } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+const COMBOS_DEFAULT_PAGE_SIZE = 20;
 
 export default function CombosPage() {
   const [combos, setCombos] = useState([]);
@@ -20,6 +21,8 @@ export default function CombosPage() {
   const [activeProviders, setActiveProviders] = useState([]);
   const [comboStrategies, setComboStrategies] = useState({});
   const [confirmState, setConfirmState] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(COMBOS_DEFAULT_PAGE_SIZE);
   const { copied, copy } = useCopyToClipboard();
 
   useEffect(() => {
@@ -127,6 +130,17 @@ export default function CombosPage() {
     }
   };
 
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(combos.length / pageSize))));
+  }, [combos.length, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(combos.length / pageSize));
+  const activePage = Math.min(page, totalPages);
+  const paginatedCombos = combos.slice(
+    (activePage - 1) * pageSize,
+    activePage * pageSize
+  );
+
   if (loading) {
     return (
       <div className="flex flex-col gap-6">
@@ -167,7 +181,7 @@ export default function CombosPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          {combos.map((combo) => (
+          {paginatedCombos.map((combo) => (
             <ComboCard
               key={combo.id}
               combo={combo}
@@ -179,6 +193,16 @@ export default function CombosPage() {
               onToggleRoundRobin={(enabled) => handleToggleRoundRobin(combo.name, enabled)}
             />
           ))}
+          <Pagination
+            currentPage={activePage}
+            pageSize={pageSize}
+            totalItems={combos.length}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
         </div>
       )}
 

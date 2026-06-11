@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { KiroService } from "@/lib/oauth/services/kiro";
-import { createProviderConnection } from "@/models";
+import { exchangeAndSaveKiroSocialConnection } from "@/lib/oauth/services/kiroConnections";
 
 /**
  * POST /api/oauth/kiro/social-exchange
@@ -25,40 +24,15 @@ export async function POST(request) {
       );
     }
 
-    const kiroService = new KiroService();
-
-    // Exchange code for tokens (redirect_uri handled internally)
-    const tokenData = await kiroService.exchangeSocialCode(
+    const { connection } = await exchangeAndSaveKiroSocialConnection({
       code,
-      codeVerifier
-    );
-
-    // Extract email from JWT if available
-    const email = kiroService.extractEmailFromJWT(tokenData.accessToken);
-
-    // Save to database
-    const connection = await createProviderConnection({
-      provider: "kiro",
-      authType: "oauth",
-      accessToken: tokenData.accessToken,
-      refreshToken: tokenData.refreshToken,
-      expiresAt: new Date(Date.now() + tokenData.expiresIn * 1000).toISOString(),
-      email: email || null,
-      providerSpecificData: {
-        profileArn: tokenData.profileArn,
-        authMethod: provider, // "google" or "github"
-        provider: provider.charAt(0).toUpperCase() + provider.slice(1),
-      },
-      testStatus: "active",
+      codeVerifier,
+      provider,
     });
 
     return NextResponse.json({
       success: true,
-      connection: {
-        id: connection.id,
-        provider: connection.provider,
-        email: connection.email,
-      },
+      connection,
     });
   } catch (error) {
     console.log("Kiro social exchange error:", error);

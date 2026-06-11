@@ -307,6 +307,22 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
           </div>
         )}
         <HeaderSearch />
+        <a
+          href="https://dsc.gg/wyxhub"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#5865F2]/30 bg-[#5865F2]/10 transition-colors hover:bg-[#5865F2]/20"
+          aria-label="Join Discord"
+          title="Join Discord"
+        >
+          <img
+            src="/icons/discord.svg"
+            alt=""
+            width={18}
+            height={18}
+            className="h-[18px] w-[18px]"
+          />
+        </a>
         <button
           onClick={() => setDonateOpen(true)}
           className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-pink-500/30 bg-pink-500/10 text-pink-600 dark:text-pink-400 hover:bg-pink-500/20 transition-colors text-sm font-medium"

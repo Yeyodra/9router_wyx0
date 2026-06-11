@@ -50,8 +50,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     if (mode === "on" && !body.thinking) {
       console.log("Injecting provider-level thinking config override: on");
       body = { ...body, thinking: { type: "enabled", budget_tokens: 10000 } };
-    } else if (mode === "off" && !body.thinking) {
+    } else if (mode === "off") {
       body = { ...body, thinking: { type: "disabled" } };
+      delete body.reasoning_effort;
+      if (body.reasoning && typeof body.reasoning === "object") {
+        body.reasoning = { ...body.reasoning, effort: "none" };
+      }
     } else if (!body.reasoning_effort) {
       body = { ...body, reasoning_effort: mode };
     }
@@ -273,8 +277,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   // Streaming response
-  const { onStreamComplete } = buildOnStreamComplete({ ...sharedCtx });
-  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete });
+  const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
+  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId });
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

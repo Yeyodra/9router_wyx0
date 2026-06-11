@@ -16,8 +16,8 @@ const inter = Inter({
 });
 
 export const metadata = {
-  title: "9Router - AI Infrastructure Management",
-  description: "One endpoint for all your AI providers. Manage keys, monitor usage, and scale effortlessly.",
+  title: "9Router WYx0 - Provider Automation & Quota Tracking",
+  description: "WYx0 fork focused on Kiro and CodeBuddy automation, multi-account workflows, and quota tracking.",
   icons: {
     icon: "/favicon.svg",
   },

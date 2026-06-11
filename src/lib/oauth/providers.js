@@ -1248,9 +1248,11 @@ const PROVIDERS = {
           Accept: "application/json",
           "User-Agent": config.userAgent,
           "X-Requested-With": "XMLHttpRequest",
-          "X-Domain": "copilot.tencent.com",
+          "X-Domain": config.domain,
           "X-No-Authorization": "true",
           "X-No-User-Id": "true",
+          "X-No-Enterprise-Id": "true",
+          "X-No-Department-Info": "true",
           "X-Product": "SaaS",
         },
         body: "{}",
@@ -1269,21 +1271,32 @@ const PROVIDERS = {
       };
     },
     pollToken: async (config, deviceCode) => {
-      const response = await fetch(config.tokenUrl, {
-        method: "POST",
+      const tokenUrl = new URL(config.tokenUrl);
+      tokenUrl.searchParams.set("state", deviceCode);
+      const response = await fetch(tokenUrl.toString(), {
+        method: "GET",
         headers: {
-          "Content-Type": "application/json",
           Accept: "application/json",
           "User-Agent": config.userAgent,
           "X-Requested-With": "XMLHttpRequest",
-          "X-Domain": "copilot.tencent.com",
+          "X-Domain": config.domain,
           "X-No-Authorization": "true",
           "X-No-User-Id": "true",
+          "X-No-Enterprise-Id": "true",
+          "X-No-Department-Info": "true",
           "X-Product": "SaaS",
         },
-        body: JSON.stringify({ state: deviceCode }),
       });
-      if (!response.ok) return { ok: false, data: { error: "request_failed" } };
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        return {
+          ok: false,
+          data: {
+            error: "request_failed",
+            error_description: errorText || `${response.status} ${response.statusText}`,
+          },
+        };
+      }
       const data = await response.json();
       // code 11217 = pending, code 0 = success
       if (data.code === 0 && data.data?.accessToken) {
@@ -1293,6 +1306,12 @@ const PROVIDERS = {
             access_token: data.data.accessToken,
             refresh_token: data.data.refreshToken || "",
             token_type: data.data.tokenType || "Bearer",
+            expires_in: data.data.expiresIn,
+            expires_at: data.data.expiresAt,
+            refresh_expires_in: data.data.refreshExpiresIn,
+            refresh_expires_at: data.data.refreshExpiresAt,
+            domain: data.data.domain || config.domain,
+            raw: data.data,
           },
         };
       }
@@ -1302,8 +1321,18 @@ const PROVIDERS = {
     mapTokens: (tokens) => ({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
-      expiresIn: 86400,
-      providerSpecificData: {},
+      expiresIn: tokens.expires_in || (
+        tokens.expires_at
+          ? Math.max(1, Math.floor((new Date(tokens.expires_at).getTime() - Date.now()) / 1000))
+          : 86400
+      ),
+      providerSpecificData: {
+        domain: tokens.domain || CODEBUDDY_CONFIG.domain,
+        refreshExpiresIn: tokens.refresh_expires_in,
+        refreshExpiresAt: tokens.refresh_expires_at,
+        tokenType: tokens.token_type || "Bearer",
+        rawAuth: tokens.raw,
+      },
     }),
   },
 };

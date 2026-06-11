@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
 export default function ProviderIcon({
@@ -12,8 +12,14 @@ export default function ProviderIcon({
   fallbackColor,
 }) {
   const [errored, setErrored] = useState(false);
+  const [imageSrc, setImageSrc] = useState(src);
 
-  if (!src || errored) {
+  useEffect(() => {
+    setErrored(false);
+    setImageSrc(src);
+  }, [src]);
+
+  if (!imageSrc || errored) {
     return (
       <span
         className={`inline-flex items-center justify-center font-bold rounded-lg ${className}`.trim()}
@@ -31,12 +37,18 @@ export default function ProviderIcon({
 
   return (
     <img
-      src={src}
+      src={imageSrc}
       alt={alt}
       width={size}
       height={size}
       className={className}
-      onError={() => setErrored(true)}
+      onError={() => {
+        if (typeof imageSrc === "string" && imageSrc.endsWith(".png")) {
+          setImageSrc(`${imageSrc.slice(0, -4)}.svg`);
+          return;
+        }
+        setErrored(true);
+      }}
     />
   );
 }

@@ -355,10 +355,11 @@ export const PROVIDERS = {
     baseUrl: "https://gitlab.com/api/v4/chat/completions",
     format: "openai",
   },
-  // CodeBuddy (Tencent) - uses device_code polling auth, no chat completions baseUrl needed
+  // CodeBuddy (Tencent) - external CodeBuddy Code endpoint
   codebuddy: {
-    baseUrl: "https://copilot.tencent.com/v1/chat/completions",
+    baseUrl: "https://www.codebuddy.ai/v2/chat/completions",
     format: "openai",
+    refreshUrl: "https://www.codebuddy.ai/v2/plugin/auth/token/refresh",
   },
   opencode: {
     baseUrl: "https://opencode.ai",

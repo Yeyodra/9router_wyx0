@@ -1,6 +1,6 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isNonAccountError } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
@@ -21,6 +21,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
+  const strictPreferred = !!options?.strictPreferred;
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionMutex;
   let resolveMutex;
@@ -60,12 +61,38 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return null;
     }
 
-    // Filter out model-locked and excluded connections
-    const availableConnections = connections.filter(c => {
+    const baseAvailableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
       return true;
     });
+
+    // Filter out model-locked and excluded connections. Strict pinning is used
+    // by Codex gateway account aliases, where silently switching identity would
+    // break the user's mental model of "this session/account".
+    let availableConnections = baseAvailableConnections;
+    if (strictPreferred && preferredConnectionId) {
+      const preferred = connections.find((c) => c.id === preferredConnectionId);
+      if (!preferred) {
+        log.warn("AUTH", `${provider} | pinned account not found: ${preferredConnectionId}`);
+        return null;
+      }
+      if (excludeSet.has(preferred.id)) {
+        log.warn("AUTH", `${provider} | pinned account excluded after failure: ${preferred.id?.slice(0, 8)}`);
+        return null;
+      }
+      if (isModelLockActive(preferred, model)) {
+        const retryAfter = getEarliestModelLockUntil(preferred);
+        return {
+          allRateLimited: true,
+          retryAfter,
+          retryAfterHuman: formatRetryAfter(retryAfter),
+          lastError: preferred.lastError || "Pinned account unavailable",
+          lastErrorCode: preferred.errorCode || null,
+        };
+      }
+      availableConnections = [preferred];
+    }
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
     connections.forEach(c => {
@@ -112,6 +139,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (connection) {
       // skip strategy
+    } else if (strictPreferred && preferredConnectionId) {
+      log.warn("AUTH", `${provider} | pinned account unavailable: ${preferredConnectionId}`);
+      return null;
     } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
@@ -202,6 +232,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
+  if (isNonAccountError(status, errorText)) {
+    log.warn("AUTH", `non-account error; no fallback [${status}] ${typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error"}`);
+    return { shouldFallback: false, cooldownMs: 0 };
+  }
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;

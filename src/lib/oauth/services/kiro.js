@@ -1,4 +1,5 @@
 import { KIRO_CONFIG } from "../constants/oauth.js";
+import { generatePKCE } from "../utils/pkce.js";
 
 /**
  * Kiro OAuth Service
@@ -12,6 +13,26 @@ import { KIRO_CONFIG } from "../constants/oauth.js";
 const KIRO_AUTH_SERVICE = "https://prod.us-east-1.auth.desktop.kiro.dev";
 
 export class KiroService {
+  /**
+   * Generate Google/GitHub social authorization payload with PKCE.
+   */
+  createSocialAuthorization(provider) {
+    if (!provider || !["google", "github"].includes(provider)) {
+      throw new Error("Invalid provider. Use 'google' or 'github'");
+    }
+
+    const { codeVerifier, codeChallenge, state } = generatePKCE();
+    const authUrl = this.buildSocialLoginUrl(provider, codeChallenge, state);
+
+    return {
+      authUrl,
+      state,
+      codeVerifier,
+      codeChallenge,
+      provider,
+    };
+  }
+
   /**
    * Register OIDC client with AWS SSO
    * Returns clientId and clientSecret for device code flow

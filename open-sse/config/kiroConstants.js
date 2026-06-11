@@ -20,6 +20,9 @@ export const KIRO_THINKING_SUFFIX = "-thinking";
 
 export const KIRO_THINKING_BUDGET_DEFAULT = 16000;
 
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+
 export const KIRO_AGENTIC_SYSTEM_PROMPT = `
 # CRITICAL: CHUNKED WRITE PROTOCOL (MANDATORY)
 
@@ -89,6 +92,10 @@ REMEMBER: When in doubt, write LESS per operation. Multiple small operations > o
  * @returns {boolean}
  */
 export function isThinkingEnabled(body, headers, model) {
+  if (isThinkingExplicitlyDisabled(body)) {
+    return false;
+  }
+
   if (headers) {
     const beta = pickHeader(headers, "anthropic-beta");
     if (typeof beta === "string" && beta.toLowerCase().includes("interleaved-thinking")) {
@@ -127,6 +134,45 @@ export function isThinkingEnabled(body, headers, model) {
   }
 
   return false;
+}
+
+function isThinkingExplicitlyDisabled(body) {
+  if (!body || typeof body !== "object") return false;
+  const thinking = body.thinking;
+  if (thinking && typeof thinking === "object" && thinking.type === "disabled") {
+    return true;
+  }
+  const effort = body.reasoning_effort
+    ?? (body.reasoning && typeof body.reasoning === "object" ? body.reasoning.effort : null);
+  return typeof effort === "string" && effort.toLowerCase() === "none";
+}
+
+/**
+ * Decide whether Kiro reasoning chunks should be forwarded to the client.
+ *
+ * Kiro's reasoning stream is useful for debugging, but most downstream clients
+ * display it as user-visible "thinking" progress. Keep the default quiet and
+ * let power users opt in per request or by environment variable.
+ */
+export function shouldExposeKiroReasoning(body) {
+  const explicit = firstDefined(
+    body?.kiro_expose_reasoning,
+    body?.kiroExposeReasoning,
+    body?.metadata?.kiro_expose_reasoning,
+    body?.metadata?.kiroExposeReasoning,
+    body?.extra_body?.kiro_expose_reasoning,
+    body?.extra_body?.kiroExposeReasoning
+  );
+  const parsedExplicit = parseBooleanLike(explicit);
+  if (parsedExplicit !== null) return parsedExplicit;
+
+  const envSource = typeof process !== "undefined" ? process.env : {};
+  const env = firstDefined(
+    envSource.KIRO_EXPOSE_REASONING,
+    envSource.NINE_ROUTER_EXPOSE_REASONING
+  );
+  const parsedEnv = parseBooleanLike(env);
+  return parsedEnv === true;
 }
 
 /**
@@ -259,4 +305,18 @@ function containsTagInText(text) {
   if (!text.includes("<thinking_mode>")) return false;
   return text.includes("<thinking_mode>enabled</thinking_mode>")
     || text.includes("<thinking_mode>interleaved</thinking_mode>");
+}
+
+function firstDefined(...values) {
+  return values.find(value => value !== undefined && value !== null);
+}
+
+function parseBooleanLike(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (TRUE_VALUES.has(normalized)) return true;
+  if (FALSE_VALUES.has(normalized)) return false;
+  return null;
 }
