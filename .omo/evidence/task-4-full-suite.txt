@@ -1,0 +1,45 @@
+﻿bun test v1.3.13 (bf2e2cec)
+bun : 
+At line:1 char:39
++ ... ts\9router; bun test ./tests/unit/codebuddy-headers.test.js ./tests/u ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+tests\unit\codebuddy-headers.test.js:
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include CLI spoofing headers for CodeBuddy 
+provider
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should set Bearer Authorization when accessToken is 
+provided
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should set Bearer Authorization when apiKey is provided
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include Accept: text/event-stream when 
+stream=true
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include Content-Type: application/json; 
+charset=utf-8
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include User-Agent header
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-Requested-With: XMLHttpRequest
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-IDE-Type: CLI
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-IDE-Name: CLI
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-IDE-Version: 2.105.2
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-Private-Data: false
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-Domain with default value when not 
+provided
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-Domain with custom value when provided 
+in providerSpecificData
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should generate X-Request-ID header
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should generate X-Conversation-ID header
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-Conversation-Request-ID header
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-Conversation-Message-ID header
+(pass) DefaultExecutor.buildHeaders() ΓÇö codebuddy provider > should include X-Agent-Intent: craft
+
+tests\unit\codebuddy-headers-simple.test.js:
+(pass) CodeBuddy buildHeaders() - RED phase test > should include X-App: cli header
+(pass) CodeBuddy buildHeaders() - RED phase test > should include X-Stainless-Runtime: node header
+(pass) CodeBuddy buildHeaders() - RED phase test > should include X-Stainless-Lang: js header
+(pass) CodeBuddy buildHeaders() - RED phase test > should include X-Stainless-Helper-Method: stream header
+(pass) CodeBuddy buildHeaders() - RED phase test > should include X-Stainless-Retry-Count: 0 header
+
+ 23 pass
+ 0 fail
+ 31 expect() calls
+Ran 23 tests across 2 files. [68.00ms]

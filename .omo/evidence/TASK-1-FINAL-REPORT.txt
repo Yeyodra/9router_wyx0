@@ -1,0 +1,70 @@
+﻿╔════════════════════════════════════════════════════════════════════════════╗
+║                    TASK 1: TDD RED PHASE - COMPLETE ✅                    ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+📋 DELIVERABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Test Files Created:
+   • tests/unit/codebuddy-headers.test.js (18 tests, comprehensive)
+   • tests/unit/codebuddy-headers-simple.test.js (5 tests, focused)
+
+✅ Evidence Saved:
+   • .omo/evidence/task-1-test-fails.txt (simple test output)
+   • .omo/evidence/task-1-full-test-fails.txt (full test output)
+   • .omo/evidence/TASK-1-SUMMARY.md (detailed summary)
+   • .omo/evidence/TASK-1-CHECKLIST.md (completion checklist)
+
+🔴 RED PHASE CONFIRMED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Test Results:
+   • 5 tests FAILING ✅ (as expected)
+   • 0 tests passing
+   • Exit code: 1 (failure)
+
+Headers Being Tested (all currently undefined):
+   1. ✗ X-App: cli
+   2. ✗ X-Stainless-Runtime: node
+   3. ✗ X-Stainless-Lang: js
+   4. ✗ X-Stainless-Helper-Method: stream
+   5. ✗ X-Stainless-Retry-Count: 0
+
+📝 TEST STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Provider: CodeBuddy only (not claude, gemini, etc.)
+Pattern: Follows claude-header-forwarding.test.js
+Framework: Vitest + Bun test runner
+Credentials: { accessToken: "test-token" }
+Stream: true
+
+✅ REQUIREMENTS MET
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ Test file created or updated
+✓ Test asserts presence of 5 headers
+✓ bun test fails with expected error message
+✓ Evidence saved to .omo/evidence/task-1-test-fails.txt
+✓ Follows pattern from claude-header-forwarding.test.js
+✓ Tests ONLY CodeBuddy provider
+✓ Verifies test FAILS before implementation
+✓ Does NOT modify implementation code
+✓ Does NOT test other providers
+✓ Does NOT test refreshCodeBuddy() method
+✓ Does NOT make test pass
+
+🚀 NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Task 2 (GREEN Phase):
+   • Implement the 5 CLI spoofing headers in buildHeaders()
+   • File: open-sse/executors/default.js (lines 276-293)
+   • Run: bun test tests/unit/codebuddy-headers-simple.test.js
+   • Expected: 5 pass, 0 fail
+
+Task 3 (REFACTOR Phase):
+   • Code cleanup and optimization
+   • Ensure all tests pass
+   • Final verification
+

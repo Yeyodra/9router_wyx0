@@ -1,0 +1,113 @@
+TASK 2 IMPLEMENTATION DETAILS
+=============================
+
+FILE: open-sse/executors/default.js
+LINES: 276-299 (CodeBuddy provider case)
+
+BEFORE (Lines 276-293):
+-----------------------
+} else if (this.provider === "codebuddy") {
+  const requestId = codeBuddyRequestId();
+  const conversationId = codeBuddyRequestId();
+  headers["Authorization"] = `Bearer ${credentials.apiKey || credentials.accessToken}`;
+  headers["Accept"] = "text/event-stream";
+  headers["Content-Type"] = "application/json; charset=utf-8";
+  headers["User-Agent"] = "CLI/2.105.2 CodeBuddy/2.105.2";
+  headers["X-Requested-With"] = "XMLHttpRequest";
+  headers["X-Domain"] = credentials.providerSpecificData?.domain || "www.codebuddy.ai";
+  headers["X-Request-ID"] = requestId;
+  headers["X-Conversation-ID"] = conversationId;
+  headers["X-Conversation-Request-ID"] = conversationId;
+  headers["X-Conversation-Message-ID"] = requestId;
+  headers["X-Agent-Intent"] = "craft";
+  headers["X-IDE-Type"] = "CLI";
+  headers["X-IDE-Name"] = "CLI";
+  headers["X-IDE-Version"] = "2.105.2";
+  headers["X-Private-Data"] = "false";
+}
+
+AFTER (Lines 276-299):
+----------------------
+} else if (this.provider === "codebuddy") {
+  const requestId = codeBuddyRequestId();
+  const conversationId = codeBuddyRequestId();
+  headers["Authorization"] = `Bearer ${credentials.apiKey || credentials.accessToken}`;
+  headers["Accept"] = "text/event-stream";
+  headers["Content-Type"] = "application/json; charset=utf-8";
+  headers["User-Agent"] = "CLI/2.105.2 CodeBuddy/2.105.2";
+  // CLI spoofing headers for restricted account bypass
+  headers["X-App"] = "cli";
+  headers["X-Stainless-Runtime"] = "node";
+  headers["X-Stainless-Lang"] = "js";
+  headers["X-Stainless-Helper-Method"] = "stream";
+  headers["X-Stainless-Retry-Count"] = "0";
+  headers["X-Requested-With"] = "XMLHttpRequest";
+  headers["X-Domain"] = credentials.providerSpecificData?.domain || "www.codebuddy.ai";
+  headers["X-Request-ID"] = requestId;
+  headers["X-Conversation-ID"] = conversationId;
+  headers["X-Conversation-Request-ID"] = conversationId;
+  headers["X-Conversation-Message-ID"] = requestId;
+  headers["X-Agent-Intent"] = "craft";
+  headers["X-IDE-Type"] = "CLI";
+  headers["X-IDE-Name"] = "CLI";
+  headers["X-IDE-Version"] = "2.105.2";
+  headers["X-Private-Data"] = "false";
+}
+
+DIFF SUMMARY:
+--------------
++6 lines added (5 headers + 1 comment)
+0 lines removed
+0 lines modified
+
+EXACT CHANGES:
+---------------
+Line 283: // CLI spoofing headers for restricted account bypass
+Line 284: headers["X-App"] = "cli";
+Line 285: headers["X-Stainless-Runtime"] = "node";
+Line 286: headers["X-Stainless-Lang"] = "js";
+Line 287: headers["X-Stainless-Helper-Method"] = "stream";
+Line 288: headers["X-Stainless-Retry-Count"] = "0";
+
+INSERTION POINT:
+-----------------
+After: headers["User-Agent"] = "CLI/2.105.2 CodeBuddy/2.105.2"; (line 282)
+Before: headers["X-Requested-With"] = "XMLHttpRequest"; (now line 289)
+
+HEADER VALUES SOURCE:
+----------------------
+All header values match exactly with CLAUDE_CLI_SPOOF_HEADERS from:
+open-sse/config/providers.js:29-45
+
+Reference values:
+- X-App: "cli" (line 35)
+- X-Stainless-Runtime: "node" (line 40)
+- X-Stainless-Lang: "js" (line 41)
+- X-Stainless-Helper-Method: "stream" (line 36)
+- X-Stainless-Retry-Count: "0" (line 37)
+
+COMPLIANCE NOTES:
+------------------
+✓ Did NOT import CLAUDE_CLI_SPOOF_HEADERS constant
+✓ Manually added each header with exact values
+✓ Kept all existing CodeBuddy headers intact
+✓ User-Agent header remains unchanged
+✓ No modifications to other providers
+✓ No modifications to refreshCodeBuddy() method
+✓ No modifications to providers.js
+
+TEST COVERAGE:
+---------------
+Simple Test (5 tests):
+  ✓ X-App: cli
+  ✓ X-Stainless-Runtime: node
+  ✓ X-Stainless-Lang: js
+  ✓ X-Stainless-Helper-Method: stream
+  ✓ X-Stainless-Retry-Count: 0
+
+Comprehensive Test (18 tests):
+  ✓ All existing headers verified
+  ✓ New headers integration verified
+  ✓ No regressions
+
+TOTAL: 23 tests pass, 0 fail

@@ -1,0 +1,60 @@
+NO REGRESSION TEST RESULTS - Task 2: Add CLI Spoofing Headers
+==============================================================
+
+Test Files: 
+- tests/unit/codebuddy-headers.test.js (comprehensive CodeBuddy tests)
+- tests/unit/codebuddy-bulk-import-manager.test.js (related CodeBuddy tests)
+
+Date: 2025-06-13
+
+COMPREHENSIVE CODEBUDDY HEADERS TEST (18 tests):
+-------------------------------------------------
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include CLI spoofing headers for CodeBuddy provider
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should set Bearer Authorization when accessToken is provided
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should set Bearer Authorization when apiKey is provided
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include Accept: text/event-stream when stream=true
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include Content-Type: application/json; charset=utf-8
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include User-Agent header
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-Requested-With: XMLHttpRequest
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-IDE-Type: CLI
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-IDE-Name: CLI
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-IDE-Version: 2.105.2
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-Private-Data: false
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-Domain with default value when not provided
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-Domain with custom value when provided in providerSpecificData
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should generate X-Request-ID header
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should generate X-Conversation-ID header
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-Conversation-Request-ID header
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-Conversation-Message-ID header
+✓ DefaultExecutor.buildHeaders() — codebuddy provider > should include X-Agent-Intent: craft
+
+SUMMARY:
+--------
+23 pass (5 simple + 18 comprehensive)
+0 fail
+31 expect() calls
+Ran 23 tests across 2 files. [111.00ms]
+
+STATUS: ✅ NO REGRESSION DETECTED
+All existing CodeBuddy headers remain intact and functional.
+All new CLI spoofing headers are properly integrated.
+
+VERIFICATION:
+--------------
+✓ Existing Authorization header: Bearer token
+✓ Existing Accept header: text/event-stream
+✓ Existing Content-Type header: application/json; charset=utf-8
+✓ Existing User-Agent header: CLI/2.105.2 CodeBuddy/2.105.2 (UNCHANGED)
+✓ Existing X-Requested-With header: XMLHttpRequest
+✓ Existing X-Domain header: www.codebuddy.ai (or custom)
+✓ Existing X-Request-ID header: Generated
+✓ Existing X-Conversation-ID header: Generated
+✓ Existing X-IDE-Type/Name/Version headers: CLI
+✓ Existing X-Private-Data header: false
+✓ Existing X-Agent-Intent header: craft
+
+✓ New X-App header: cli
+✓ New X-Stainless-Runtime header: node
+✓ New X-Stainless-Lang header: js
+✓ New X-Stainless-Helper-Method header: stream
+✓ New X-Stainless-Retry-Count header: 0
