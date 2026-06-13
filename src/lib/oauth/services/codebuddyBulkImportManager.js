@@ -23,6 +23,8 @@ const CODEBUDDY_MAX_TRANSIENT_POLL_ERRORS = 6;
 const CODEBUDDY_COOKIE_DOMAINS = new Set(["codebuddy.ai", "www.codebuddy.ai"]);
 const CODEBUDDY_KEYS_URL = "https://www.codebuddy.ai/profile/keys";
 const CODEBUDDY_API_KEY_ENDPOINT = "https://www.codebuddy.ai/console/api/client/v1/api-keys";
+const CODEBUDDY_REGION_ACCOUNT_ENDPOINT = "https://www.codebuddy.ai/console/login/account";
+const CODEBUDDY_TRIAL_ENDPOINT = "https://www.codebuddy.ai/billing/ide/trial";
 const CODEBUDDY_DEFAULT_KEY_EXPIRE_DAYS = 365;
 const CODEBUDDY_KEY_SESSION_TIMEOUT_MS = 45_000;
 const CODEBUDDY_KEY_SESSION_POLL_MS = 1_500;
@@ -30,6 +32,9 @@ const CODEBUDDY_PERSONAL_ENTERPRISE_ID = "personal-edition-user-id";
 const CODEBUDDY_KEY_ERROR_CODES = {
   nameExists: 12502,
   keyLimitReached: 12601,
+};
+const CODEBUDDY_TRIAL_ERROR_CODES = {
+  alreadyApplied: 14051,
 };
 
 function wait(ms) {
@@ -245,6 +250,128 @@ function buildCodeBuddyKeyResult(payload, fallbackName) {
     name: item?.name || data.name || fallbackName,
     expiresAt: data.expires_at || data.expiresAt || item?.expires_at || item?.expiresAt || null,
     createdAt: item?.created_at || item?.createdAt || null,
+  };
+}
+
+async function postJsonFromPage(page, url, { method = "POST", headers = {}, referrer, body } = {}) {
+  return page.evaluate(async ({ url: targetUrl, method: requestMethod, headers: requestHeaders, referrer: requestReferrer, body: requestBody }) => {
+    const response = await fetch(targetUrl, {
+      method: requestMethod,
+      credentials: "include",
+      headers: requestHeaders,
+      referrer: requestReferrer,
+      body: requestBody == null ? null : JSON.stringify(requestBody),
+    });
+    const text = await response.text().catch(() => "");
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      payload = { raw: text };
+    }
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+      text,
+    };
+  }, {
+    url,
+    method,
+    headers,
+    referrer,
+    body,
+  });
+}
+
+async function submitCodeBuddyRegionProfile(page, onStep) {
+  onStep?.("submitting_codebuddy_region_profile", "Submitting CodeBuddy region profile via account API");
+  const result = await postJsonFromPage(page, CODEBUDDY_REGION_ACCOUNT_ENDPOINT, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "content-type": "application/json",
+      "x-requested-with": "XMLHttpRequest",
+      "x-domain": "www.codebuddy.ai",
+    },
+    referrer: "https://www.codebuddy.ai/register/user/complete",
+    body: {
+      attributes: {
+        countryCode: ["62"],
+        countryFullName: ["Indonesia"],
+        countryName: ["ID"],
+      },
+    },
+  });
+
+  if (result.ok && (result.payload?.code === 0 || result.payload?.code === 200 || typeof result.payload?.code === "undefined")) {
+    return {
+      ok: true,
+      code: result.payload?.code ?? 0,
+      message: result.payload?.msg || result.payload?.message || "OK",
+    };
+  }
+
+  return {
+    ok: false,
+    code: result.payload?.code ?? result.status,
+    message: result.payload?.msg || result.payload?.message || result.text || `HTTP ${result.status}`,
+  };
+}
+
+async function ensureCodeBuddyTrialActivated(page, onStep) {
+  onStep?.("activating_codebuddy_trial", "Applying or verifying CodeBuddy IDE trial");
+  const invokeTrial = () => postJsonFromPage(page, CODEBUDDY_TRIAL_ENDPOINT, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "x-requested-with": "XMLHttpRequest",
+      "x-domain": "www.codebuddy.ai",
+    },
+    referrer: "https://www.codebuddy.ai/profile/plan",
+    body: null,
+  });
+
+  const first = await invokeTrial();
+  const firstCode = first?.payload?.code;
+  if (first.ok && firstCode === CODEBUDDY_TRIAL_ERROR_CODES.alreadyApplied) {
+    return {
+      ok: true,
+      code: firstCode,
+      state: "already_applied",
+      message: first.payload?.msg || "has applied trial",
+    };
+  }
+
+  if (first.ok && (firstCode === 0 || firstCode === 200 || typeof firstCode === "undefined")) {
+    await wait(1200);
+    const second = await invokeTrial();
+    const secondCode = second?.payload?.code;
+    if (second.ok && (
+      secondCode === 0
+      || secondCode === 200
+      || secondCode === CODEBUDDY_TRIAL_ERROR_CODES.alreadyApplied
+      || typeof secondCode === "undefined"
+    )) {
+      return {
+        ok: true,
+        code: secondCode ?? firstCode ?? 0,
+        state: secondCode === CODEBUDDY_TRIAL_ERROR_CODES.alreadyApplied ? "applied_confirmed" : "applied",
+        message: second.payload?.msg || first.payload?.msg || "OK",
+      };
+    }
+
+    return {
+      ok: false,
+      code: secondCode ?? second.status,
+      message: second.payload?.msg || second.payload?.message || second.text || `HTTP ${second.status}`,
+    };
+  }
+
+  return {
+    ok: false,
+    code: firstCode ?? first.status,
+    message: first.payload?.msg || first.payload?.message || first.text || `HTTP ${first.status}`,
   };
 }
 
@@ -518,10 +645,47 @@ async function completeCodeBuddyRegistration(page, onStep) {
 }
 
 async function finalizeCodeBuddySuccess({ manager, job, account, context, page, tokens, email, createOptions = {} }) {
+  let effectiveTokens = tokens || {};
+  if (page) {
+    const regionResult = await submitCodeBuddyRegionProfile(page, (step, message) => {
+      manager.setAccountStep(account, step, message);
+      void manager.persistJobSnapshot(job, { forcePreview: false });
+    });
+    effectiveTokens = {
+      ...effectiveTokens,
+      providerSpecificData: {
+        ...(effectiveTokens.providerSpecificData || {}),
+        codebuddyRegionSubmitOk: regionResult.ok,
+        codebuddyRegionSubmitCode: regionResult.code ?? null,
+        codebuddyRegionSubmitMessage: regionResult.message || null,
+      },
+    };
+
+    const trialResult = await ensureCodeBuddyTrialActivated(page, (step, message) => {
+      manager.setAccountStep(account, step, message);
+      void manager.persistJobSnapshot(job, { forcePreview: false });
+    });
+    if (!trialResult.ok) {
+      const error = new Error(trialResult.message || "CodeBuddy IDE trial activation failed");
+      error.step = "trial_not_activated";
+      error.status = "trial_not_activated";
+      throw error;
+    }
+
+    effectiveTokens = {
+      ...effectiveTokens,
+      providerSpecificData: {
+        ...(effectiveTokens.providerSpecificData || {}),
+        codebuddyTrialState: trialResult.state || null,
+        codebuddyTrialCode: trialResult.code ?? null,
+        codebuddyTrialMessage: trialResult.message || null,
+      },
+    };
+  }
+
   manager.setAccountStep(account, "creating_codebuddy_api_key", "Generating CodeBuddy Access Key");
   await manager.persistJobSnapshot(job, { forcePreview: true });
 
-  const effectiveTokens = tokens || {};
   const existingApiKey = effectiveTokens.apiKey
     || effectiveTokens.generatedApiKey?.key
     || await manager.findExistingApiKey(email);
