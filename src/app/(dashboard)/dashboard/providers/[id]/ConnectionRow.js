@@ -172,6 +172,14 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
                 Proxy
               </Badge>
             )}
+            {connection.autoDisabledAt && (
+              <span className="text-[10px] text-text-muted">
+                {connection.autoDisabledReason === "token_expired" ? "Token expired" :
+                 connection.autoDisabledReason === "banned" ? "Banned" :
+                 connection.autoDisabledReason === "quota_exhausted" ? "Quota exhausted" :
+                 "Auto-disabled"} — {new Date(connection.autoDisabledAt).toLocaleDateString()}
+              </span>
+            )}
             {isCooldown && connection.isActive !== false && <CooldownTimer until={modelLockUntil} />}
             {connection.lastError && connection.isActive !== false && (
               <span className="max-w-full truncate text-xs text-red-500 sm:max-w-[300px]" title={connection.lastError}>

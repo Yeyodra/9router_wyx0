@@ -849,10 +849,16 @@ export default function ProviderDetailPage() {
       const res = await fetch(`/api/providers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive }),
+        body: JSON.stringify(isActive
+          ? { isActive, autoDisabledAt: null, autoDisabledReason: null, consecutiveAuthFailures: 0 }
+          : { isActive }
+        ),
       });
       if (res.ok) {
-        setConnections(prev => prev.map(c => c.id === id ? { ...c, isActive } : c));
+        setConnections(prev => prev.map(c => c.id === id
+          ? { ...c, isActive, ...(isActive ? { autoDisabledAt: null, autoDisabledReason: null, consecutiveAuthFailures: 0 } : {}) }
+          : c
+        ));
       }
     } catch (error) {
       console.log("Error updating connection status:", error);

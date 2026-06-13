@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getKiroBulkImportManager, parseKiroBulkAccounts } from "@/lib/oauth/services/kiroBulkImportManager";
+import { getQoderBulkImportManager, parseKiroBulkAccounts } from "@/lib/oauth/services/qoderBulkImportManager";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,7 @@ export async function POST(request) {
       );
     }
 
-    const manager = getKiroBulkImportManager();
+    const manager = getQoderBulkImportManager();
     const job = await manager.startJob({
       accounts,
       concurrency: body?.concurrency,
@@ -40,7 +40,7 @@ export async function POST(request) {
     const status = Array.isArray(error?.invalidLines) ? 400 : 500;
     return NextResponse.json(
       {
-        error: error?.error || error?.message || "Failed to start Kiro bulk import",
+        error: error?.error || error?.message || "Failed to start Qoder bulk import",
         ...(Array.isArray(error?.invalidLines) ? { invalidLines: error.invalidLines } : {}),
       },
       { status }

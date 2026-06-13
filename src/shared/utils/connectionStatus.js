@@ -67,6 +67,14 @@ function withMeta(key, reason = "") {
 
 export function classifyConnectionStatus(connection = {}) {
   if (connection.isActive === false) {
+    if (connection.autoDisabledReason) {
+      const reasonLabels = {
+        token_expired: "Auto-disabled: token expired",
+        banned: "Auto-disabled: account banned/suspended",
+        quota_exhausted: "Auto-disabled: quota exhausted",
+      };
+      return withMeta("disabled", reasonLabels[connection.autoDisabledReason] || `Auto-disabled: ${connection.autoDisabledReason}`);
+    }
     return withMeta("disabled", "Connection is disabled");
   }
 

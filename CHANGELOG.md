@@ -1,3 +1,33 @@
+# v0.4.81 (2026-06-14)
+
+## Qoder Auto Login
+- Added Qoder bulk auto-login via Google SSO and device flow (PKCE + poll).
+- New automation panel in Dashboard → Automation with bulk account and device OAuth options.
+- API routes: `/api/oauth/qoder/bulk-import` with job tracking, cancel, and manual session support.
+- Reuses the same Google SSO automation engine as Kiro and CodeBuddy.
+
+## Bulk Account Normalization
+- `parseKiroBulkAccounts` now supports multiple separators: `email:password`, `email|password`, and tab-separated.
+- Lines starting with `#` are treated as comments and skipped.
+- Colon separator only activates when the part before `:` contains `@` (prevents false splits on passwords with colons).
+- Updated UI placeholder and help text to reflect new format support.
+
+## Auto-Disable on Terminal Auth Errors
+- Accounts that receive 3 consecutive terminal auth errors (token expired, banned, quota exhausted) are automatically disabled (`isActive: false`).
+- New fields: `autoDisabledAt`, `autoDisabledReason`, `consecutiveAuthFailures`.
+- Failure counter resets on successful requests.
+- Dashboard shows auto-disable reason and date; re-enabling clears the auto-disable state.
+
+## Proxy for Login
+- Browser automation (Playwright) now accepts proxy configuration via the bulk import manager.
+- Qoder bulk import manager supports `proxyUrl` for HTTP/SOCKS proxy passthrough to Playwright.
+
+## Code Structure
+- Extracted `googleAutomation.js` and `codebuddyAutomation.js` as re-export modules for cleaner imports.
+- CodeBuddy bulk import manager now imports from dedicated modules instead of `kiroGoogleAutomation.js`.
+
+---
+
 # Unreleased
 
 ## Automation

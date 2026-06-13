@@ -9,11 +9,13 @@ import {
 } from "./kiroBulkImportManager.js";
 import {
   runGoogleAccountAutomation,
+} from "./googleAutomation.js";
+import {
   handleCodeBuddyRegionPage,
   handleProviderOnboarding,
   handleCodeBuddyStartedAuthorization,
   isProviderPage,
-} from "./kiroGoogleAutomation.js";
+} from "./codebuddyAutomation.js";
 
 const CODEBUDDY_PROVIDER_ID = "codebuddy";
 const CODEBUDDY_LABEL = "CodeBuddy";

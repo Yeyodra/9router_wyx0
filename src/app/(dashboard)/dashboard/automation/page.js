@@ -251,6 +251,62 @@ function CodeBuddyAutomationPanel({ providerInfo, onRefresh }) {
   );
 }
 
+function QoderAutomationPanel({ providerInfo, onRefresh }) {
+  const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isOAuthOpen, setIsOAuthOpen] = useState(false);
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button
+          type="button"
+          onClick={() => setIsBulkOpen(true)}
+          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
+            <span className="material-symbols-outlined text-[20px] text-primary">group_add</span>
+            Auto Login Bulk
+          </span>
+          <span className="text-xs leading-relaxed text-text-muted">
+            Run bulk gmail:password or gmail|password automation via Google SSO with Qoder device flow.
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsOAuthOpen(true)}
+          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
+            <span className="material-symbols-outlined text-[20px] text-primary">login</span>
+            Device OAuth Login
+          </span>
+          <span className="text-xs leading-relaxed text-text-muted">
+            Open Qoder device login in browser and poll until the token is saved.
+          </span>
+        </button>
+      </div>
+      <BulkAccountAutomationModal
+        isOpen={isBulkOpen}
+        provider="qoder"
+        title="Qoder Bulk GSuite Auto Login"
+        serviceName="Qoder"
+        onSuccess={onRefresh}
+        onClose={() => setIsBulkOpen(false)}
+      />
+      <OAuthModal
+        isOpen={isOAuthOpen}
+        provider="qoder"
+        providerInfo={providerInfo}
+        onSuccess={() => {
+          onRefresh?.();
+          setIsOAuthOpen(false);
+        }}
+        onClose={() => setIsOAuthOpen(false)}
+      />
+    </>
+  );
+}
+
 const AUTOMATION_PROVIDERS = [
   {
     id: "kiro",
@@ -267,6 +323,14 @@ const AUTOMATION_PROVIDERS = [
     description: "Bulk GSuite automation and browser OAuth polling login.",
     supportedModes: ["bulk-account", "device-oauth"],
     component: CodeBuddyAutomationPanel,
+  },
+  {
+    id: "qoder",
+    label: "Qoder",
+    icon: "code",
+    description: "Bulk GSuite auto login via Google SSO and device flow.",
+    supportedModes: ["bulk-account", "device-oauth"],
+    component: QoderAutomationPanel,
   },
 ];
 

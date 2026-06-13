@@ -80,20 +80,41 @@ export function parseKiroBulkAccounts(accounts = []) {
   lines.forEach((line, index) => {
     const raw = String(line || "").trim();
     if (!raw) return;
+    // Skip comment lines
+    if (raw.startsWith("#")) return;
 
-    const [email = "", ...passwordParts] = raw.split("|");
-    const normalizedEmail = email.trim();
-    const normalizedPassword = passwordParts.join("|").trim();
+    let email = "";
+    let password = "";
 
-    if (!normalizedEmail || !normalizedPassword) {
+    if (raw.includes("|")) {
+      // Pipe separator (original behavior) — password may contain |
+      const [emailPart = "", ...passwordParts] = raw.split("|");
+      email = emailPart.trim();
+      password = passwordParts.join("|").trim();
+    } else if (raw.includes("\t")) {
+      // Tab separator (spreadsheet paste)
+      const tabIdx = raw.indexOf("\t");
+      email = raw.substring(0, tabIdx).trim();
+      password = raw.substring(tabIdx + 1).trim();
+    } else if (raw.includes(":")) {
+      // Colon separator — only if part before first : looks like email
+      const colonIdx = raw.indexOf(":");
+      const beforeColon = raw.substring(0, colonIdx).trim();
+      if (beforeColon.includes("@")) {
+        email = beforeColon;
+        password = raw.substring(colonIdx + 1).trim();
+      }
+    }
+
+    if (!email || !password) {
       invalidLines.push(index + 1);
       return;
     }
 
     parsed.push({
       line: index + 1,
-      email: normalizedEmail,
-      password: normalizedPassword,
+      email,
+      password,
     });
   });
 
