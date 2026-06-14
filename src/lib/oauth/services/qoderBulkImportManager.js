@@ -50,9 +50,9 @@ async function defaultSaveQoderConnection({ tokens, email }) {
   return { connection };
 }
 
-async function defaultBrowserLauncher(proxyUrl, engine) {
+async function defaultBrowserLauncher(job) {
   const { launchBulkImportBrowser } = await import("./bulkImportBrowserEngine.js");
-  return launchBulkImportBrowser({ engine: engine || "chromium", proxyUrl });
+  return launchBulkImportBrowser({ engine: job?.engine || "chromium", proxyUrl: job?.proxyUrl || undefined });
 }
 
 class QoderBulkImportManager extends KiroBulkImportManager {
@@ -61,10 +61,9 @@ class QoderBulkImportManager extends KiroBulkImportManager {
     saveConnection = defaultSaveQoderConnection,
     qoderServiceFactory = () => new QoderService(),
     storageName = "qoder-bulk-import",
-    proxyUrl = null,
   } = {}) {
     super({
-      browserLauncher: (job) => browserLauncher(proxyUrl, job?.engine),
+      browserLauncher,
       googleAutomation: null,
       socialExchange: null,
       kiroServiceFactory: qoderServiceFactory,
@@ -72,7 +71,6 @@ class QoderBulkImportManager extends KiroBulkImportManager {
     });
     this.saveConnection = saveConnection;
     this.qoderServiceFactory = qoderServiceFactory;
-    this.proxyUrl = proxyUrl;
   }
 
   async processAccount(job, account, workerId) {

@@ -1,8 +1,33 @@
 const DEFAULT_SHORT_TIMEOUT_MS = 90_000;
 const DEFAULT_MANUAL_TIMEOUT_MS = 15 * 60_000;
 
-const EMAIL_INPUT_SELECTOR = 'input[type="email"], input[autocomplete="username"]';
-const PASSWORD_INPUT_SELECTOR = 'input[type="password"]';
+// Comma-separated CSS selector. Includes Google's stable ID, mobile/legacy form
+// names, and aria-label fallbacks for English + Indonesian. Multi-language
+// aria-label support matters because Google renders the form in the user's
+// browser locale (so "Email or phone" becomes "Email atau nomor telepon" for
+// id-ID accounts and similar for other locales).
+export const EMAIL_INPUT_SELECTOR = [
+  'input[type="email"]',
+  'input[autocomplete="username"]',
+  'input#identifierId',
+  'input[name="identifier"]',
+  'input[name="Email"]',
+  'input[type="text"][autofocus]',
+  'input[aria-label*="Email" i]',
+  'input[aria-label*="email" i]',
+  'input[aria-label*="phone" i]',
+  'input[aria-label*="telepon" i]',
+].join(", ");
+
+export const PASSWORD_INPUT_SELECTOR = [
+  'input[type="password"]',
+  'input[name="Passwd"]',
+  'input[name="password"]',
+  'input[aria-label*="Password" i]',
+  'input[aria-label*="password" i]',
+  'input[aria-label*="Sandi" i]',
+  'input[aria-label*="kata sandi" i]',
+].join(", ");
 
 const NEXT_BUTTON_SELECTORS = [
   'button:has-text("Next")',
@@ -360,6 +385,68 @@ async function getFirstVisibleLocator(page, selector) {
   }
 
   return null;
+}
+
+async function waitForFirstVisibleLocator(page, selector, { timeout = 15_000, pollInterval = 500 } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const found = await getFirstVisibleLocator(page, selector);
+    if (found) return found;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.min(pollInterval, remaining)));
+  }
+  return null;
+}
+
+async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
+  if (!locator || value == null) return false;
+
+  try {
+    await locator.fill(value, { timeout });
+  } catch {
+    // swallow; verification + fallback below will decide
+  }
+
+  let observed = "";
+  try {
+    observed = await locator.inputValue();
+  } catch {
+    observed = "";
+  }
+  if (observed === value) return true;
+
+  // Fallback for React/Vue-controlled inputs where .fill() bypasses the
+  // framework's onChange wiring and the value snaps back to empty.
+  try {
+    await locator.click({ timeout: 5_000 });
+  } catch {
+    /* noop */
+  }
+  try {
+    await locator.fill("");
+  } catch {
+    /* noop */
+  }
+  try {
+    await locator.type(value, { delay: 50, timeout });
+  } catch {
+    return false;
+  }
+
+  try {
+    observed = await locator.inputValue();
+  } catch {
+    observed = "";
+  }
+  return observed === value;
+}
+
+function parseSelectorList(selector) {
+  return String(selector || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 async function readPageText(page) {
@@ -1168,12 +1255,16 @@ export async function runGoogleAccountAutomation({
 
   await handleProviderLoginGate(page, reportStep);
 
-  const emailInput = await getFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR);
+  const emailInput = await waitForFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR, { timeout: 15_000 });
   if (emailInput) {
     reportStep("entering_email", "Entering Google email");
-    await emailInput.fill(email, { timeout: 15_000 });
-    reportStep("submitting_email", "Submitting email");
-    await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+    const filled = await fillInputResilient(emailInput, email);
+    if (!filled) {
+      reportStep("email_fill_failed", "Could not fill the Google email field; will retry in the polling loop");
+    } else {
+      reportStep("submitting_email", "Submitting email");
+      await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+    }
   }
 
   while (Date.now() - startTime < shortTimeoutMs) {
@@ -1242,9 +1333,13 @@ export async function runGoogleAccountAutomation({
     const nextEmailInput = await getFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR);
     if (nextEmailInput) {
       reportStep("entering_email", "Entering Google email");
-      await nextEmailInput.fill(email, { timeout: 15_000 });
-      reportStep("submitting_email", "Submitting email");
-      await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+      const filled = await fillInputResilient(nextEmailInput, email);
+      if (filled) {
+        reportStep("submitting_email", "Submitting email");
+        await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+      } else {
+        reportStep("email_fill_failed", "Could not fill the Google email field; retrying loop");
+      }
       await page.waitForTimeout(700);
       continue;
     }
@@ -1252,9 +1347,13 @@ export async function runGoogleAccountAutomation({
     const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
     if (passwordInput) {
       reportStep("entering_password", "Entering Google password");
-      await passwordInput.fill(password, { timeout: 15_000 });
-      reportStep("submitting_password", "Submitting password");
-      await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+      const filled = await fillInputResilient(passwordInput, password);
+      if (filled) {
+        reportStep("submitting_password", "Submitting password");
+        await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+      } else {
+        reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
+      }
       await page.waitForTimeout(700);
       continue;
     }
@@ -1312,4 +1411,11 @@ export {
   handleProviderOnboarding,
   handleCodeBuddyStartedAuthorization,
   isProviderPage,
+};
+
+export const __test__ = {
+  waitForFirstVisibleLocator,
+  fillInputResilient,
+  parseSelectorList,
+  getFirstVisibleLocator,
 };

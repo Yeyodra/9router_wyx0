@@ -1,3 +1,16 @@
+# v0.4.86-4 (2026-06-14)
+
+## Release Highlights
+- [FIX] Bulk-import gak stuck lagi di Google login dengan email field kosong - selector diperluas + retry 15s + fallback ke type() untuk React-controlled input
+
+## Technical Notes
+- Symptom: setelah v0.4.86-3 fix browser launch, beberapa worker stuck di "needs_manual" karena Google Sign-in dialog muncul tapi email field gak ke-fill (user lihat "Email or phone" kosong di Live Browser Preview).
+- Root cause #1 — selector terlalu sempit. `EMAIL_INPUT_SELECTOR` cuma cover `input[type="email"], input[autocomplete="username"]`. Google's actual form uses `input#identifierId` (stable ID), `input[name="identifier"]` (mobile variant), kadang `input[type="text"][autofocus]` (A/B test). Plus `aria-label` berbeda-beda per locale ("Email or phone" / "Email atau nomor telepon" / dll).
+- Root cause #2 — `getFirstVisibleLocator` cuma single-shot check (count + isVisible). Kalau Google form belum render saat polling pertama (typical SPA hydration ~1-3s), function return null → email skipped → polling loop eventually hit MANUAL_ASSIST_MARKERS → status `needs_manual`.
+- Root cause #3 — `locator.fill()` kadang bypass React/Vue onChange wiring di Google's controlled input, value snap-back ke empty saat form re-render.
+- Fix: (a) `EMAIL_INPUT_SELECTOR` & `PASSWORD_INPUT_SELECTOR` diperluas jadi 10 + 7 selectors mencakup semua variant + i18n aria-label English/Indonesian. (b) New helper `waitForFirstVisibleLocator(page, selector, { timeout: 15000, pollInterval: 500 })` polling sampai elemen visible atau timeout. (c) New helper `fillInputResilient(locator, value)` panggil `fill()`, verify via `inputValue()`, kalau mismatch fallback ke `click → fill('') → type(delay: 50)` untuk bypass framework wiring. (d) Kedua helper dipakai di 3 call sites: initial email entry, polling-loop email re-entry, password entry.
+- Test coverage: 16 vitest cases di `tests/unit/kiroGoogleAutomation.email.test.js` (selector regression, waitForFirstVisibleLocator timing semantics, fillInputResilient happy path / React-controlled fallback / total failure).
+
 # v0.4.86-3 (2026-06-14)
 
 ## Release Highlights

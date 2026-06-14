@@ -252,7 +252,7 @@ export function buildLookupResponse(job, extras = {}) {
 
 async function defaultBrowserLauncher(job) {
   const { launchBulkImportBrowser } = await import("./bulkImportBrowserEngine.js");
-  return launchBulkImportBrowser({ engine: job?.engine || "chromium" });
+  return launchBulkImportBrowser({ engine: job?.engine || "chromium", proxyUrl: job?.proxyUrl || undefined });
 }
 
 async function defaultSocialExchange(args) {
@@ -409,7 +409,7 @@ export class KiroBulkImportManager {
     this.latestJobId = readPersistedLatestJobId(this.metaFile);
   }
 
-  async startJob({ accounts, concurrency, engine }) {
+  async startJob({ accounts, concurrency, engine, proxyUrl }) {
     const { parsed, invalidLines } = parseKiroBulkAccounts(accounts);
     if (!parsed.length) {
       const error = invalidLines.length > 0
@@ -434,6 +434,7 @@ export class KiroBulkImportManager {
       status: "running",
       concurrency: clampConcurrency(concurrency),
       engine: resolvedEngine,
+      proxyUrl: proxyUrl || null,
       createdAt,
       startedAt: createdAt,
       finishedAt: null,
