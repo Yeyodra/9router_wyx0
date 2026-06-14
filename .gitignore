@@ -48,6 +48,9 @@ next-env.d.ts
 data/
 logs/*
 source/*
+
+# opencode / development scratch directory
+.omo/
 .cursor/*
 docs/*
 !docs/ARCHITECTURE.md
