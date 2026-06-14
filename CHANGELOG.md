@@ -1,5 +1,15 @@
 # v0.4.84 (2026-06-14)
 
+## Donate via Paymenku
+- Replaced the legacy donate modal (which fetched a JSON channel list from upstream 9router.com) with a Paymenku Payment Link picker. Five fixed-amount tiers are exposed: Rp 10k / 25k / 50k / 100k / 250k.
+- Each button opens the corresponding Paymenku Payment Link in a new tab — payment supports QRIS, Virtual Account, and E-Wallet at Paymenku's checkout page.
+- Removed `GITHUB_CONFIG.donateUrl` and the QR-card render path. Paymenku tier list lives in `shared/constants/config.js` (`PAYMENKU_DONATE_TIERS`) for easy editing.
+
+## Build Fix — Optional Native Dependencies
+- Fixed `Module not found: Can't resolve 'better-sqlite3'` build failure that hit Linux CI runners (and any environment without native build tools, where `optionalDependencies` install is silently skipped).
+- `next.config.mjs` now registers a webpack externals callback for `better-sqlite3` and `camoufox-js`, plus an extended `serverExternalPackages` list covering both packages and `playwright` / `playwright-core`. The bundler emits `commonjs` requires without resolving the path, so a missing optional package no longer breaks `next build`.
+- Adapter / route loaders swapped static imports for `createRequire(import.meta.url)` lazy resolution. Runtime still surfaces a clean `MODULE_NOT_FOUND` if the package is genuinely needed but absent.
+
 ## Bulk Import Browser Engine Selection
 - Added a Browser Engine dropdown to the bulk-import modal: **Chromium (default)** or **Camoufox (stealth Firefox)**. The job carries the engine choice all the way to the launcher, and the UI persists nothing extra — pick at start time per job.
 - Camoufox is shipped via `optionalDependencies` so users on locked-down npm registries don't fail `npm install -g wyxrouter`. The package and its ~150MB Firefox binary install lazily into the user's data dir on first Camoufox-engine job, mirroring the sqlite/playwright runtime pattern.
