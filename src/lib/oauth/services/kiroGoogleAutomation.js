@@ -17,6 +17,8 @@ const NEXT_BUTTON_SELECTORS = [
 const APPROVE_BUTTON_SELECTORS = [
   '#submit_approve_access',
   '#submit_approve_access button',
+  '#confirm',
+  'form#tos_form input[type="submit"]',
   'button[jsname]:has-text("Allow")',
   'button:has-text("Allow")',
   '[role="button"]:has-text("Allow")',
@@ -444,6 +446,33 @@ async function handleGoogleOnboarding(page, pageText) {
     const acknowledged = await clickFirstActionable(page, APPROVE_BUTTON_SELECTORS);
     if (acknowledged) {
       await page.waitForTimeout(700);
+      return true;
+    }
+    const submittedFromDom = await page.evaluate(() => {
+      const candidates = [
+        document.getElementById("confirm"),
+        document.querySelector('form#tos_form input[type="submit"]'),
+        document.querySelector('input[type="submit"][value="Saya mengerti"]'),
+        document.querySelector('input[type="submit"][value="I understand"]'),
+      ].filter(Boolean);
+      const btn = candidates[0];
+      if (!btn) return false;
+      btn.scrollIntoView({ block: "center" });
+      btn.click();
+      return true;
+    }).catch(() => false);
+    if (submittedFromDom) {
+      await page.waitForTimeout(800);
+      return true;
+    }
+    const formSubmitted = await page.evaluate(() => {
+      const form = document.getElementById("tos_form");
+      if (!form) return false;
+      form.submit();
+      return true;
+    }).catch(() => false);
+    if (formSubmitted) {
+      await page.waitForTimeout(800);
       return true;
     }
   }

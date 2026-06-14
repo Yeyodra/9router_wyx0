@@ -1,3 +1,10 @@
+# v0.4.83 (2026-06-14)
+
+## Hotfix — Workspace Welcome Click Reliability
+- Added `#confirm` and `form#tos_form input[type="submit"]` to the approve selector list (Google's speedbump form uses these stable identifiers).
+- When Playwright's click is rejected because the input fails the visibility heuristic, fall back to a DOM-level `scrollIntoView + click` via `page.evaluate`, then to `form.submit()` as a last resort.
+- Fixes residual cases where v0.4.82 detected the Workspace welcome page but couldn't actuate the "Saya mengerti" / "I understand" submit input.
+
 # v0.4.82 (2026-06-14)
 
 ## Hotfix — Bulk Login Stuck on Google Workspace Welcome
