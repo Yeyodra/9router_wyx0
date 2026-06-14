@@ -138,19 +138,52 @@ function CodeBuddyBulkTokenModal({ isOpen, onClose, onSuccess }) {
 
   if (!isOpen) return null;
 
-  const successMsg = result?.success
-    ? `Imported ${result.imported}/${result.total} tokens.${result.failed ? ` ${result.failed} failed.` : ""}`
-    : null;
+  // Build detailed success message with format breakdown
+  let successMsg = null;
+  if (result?.success) {
+    const parts = [`Imported ${result.imported}/${result.total} tokens.`];
+    if (result.failed) parts.push(`${result.failed} failed.`);
+
+    // Show format breakdown if available
+    if (result.formatCounts) {
+      const { "access-only": ao, "with-refresh": wr, "with-api-key": wa } = result.formatCounts;
+      const breakdown = [];
+      if (wa) breakdown.push(`${wa} with API key`);
+      if (wr) breakdown.push(`${wr} with refresh token`);
+      if (ao) breakdown.push(`${ao} access-only`);
+      if (breakdown.length) parts.push(`(${breakdown.join(", ")})`);
+    }
+
+    successMsg = parts.join(" ");
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-4 text-lg font-semibold text-text-main">CodeBuddy OAuth Token Import</h3>
-        <p className="mb-3 text-xs text-text-muted">Paste CodeBuddy OAuth access tokens, one per line. This is separate from generated CodeBuddy Access Keys.</p>
+        <p className="mb-2 text-xs text-text-muted">Paste CodeBuddy OAuth tokens, one per line. Supports three formats:</p>
+        <div className="mb-3 space-y-2 rounded-lg bg-background/50 p-3 text-xs text-text-muted">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px] text-primary leading-none">check_circle</span>
+            <span className="flex items-center gap-1.5"><code className="text-[10px] bg-border/50 px-1.5 py-0.5 rounded leading-none">accessToken</code><span>— access token only (24h expiry)</span></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px] text-primary leading-none">check_circle</span>
+            <span className="flex items-center gap-1.5"><code className="text-[10px] bg-border/50 px-1.5 py-0.5 rounded leading-none">accessToken:refreshToken</code><span>— enables auto-refresh</span></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px] text-primary leading-none">check_circle</span>
+            <span className="flex items-center gap-1.5"><code className="text-[10px] bg-border/50 px-1.5 py-0.5 rounded leading-none">accessToken:refreshToken:apiKey</code><span>— 365-day access</span></span>
+          </div>
+        </div>
         <textarea
           className="mb-3 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs text-text-main placeholder:text-text-muted focus:border-primary focus:outline-none"
           rows={8}
-          placeholder={"eyJhbGciOiJSUzI1NiIs...\neyJhbGciOiJSUzI1NiIs...\neyJhbGciOiJSUzI1NiIs..."}
+          placeholder={
+            "eyJhbGciOiJSUzI1NiIs...\n" +
+            "eyJhbGciOiJSUzI1NiIs...:eyJhbGciOiJSUzI1NiIs...\n" +
+            "eyJhbGciOiJSUzI1NiIs...:eyJhbGciOiJSUzI1NiIs...:ak_abc123..."
+          }
           value={tokens}
           onChange={(e) => setTokens(e.target.value)}
           disabled={loading}
@@ -207,7 +240,7 @@ function CodeBuddyAutomationPanel({ providerInfo, onRefresh }) {
             OAuth Token Import
           </span>
           <span className="text-xs leading-relaxed text-text-muted">
-            Paste OAuth access tokens directly. Generated Access Keys should come from automation.
+            Paste OAuth tokens with optional refresh tokens and API keys for extended access.
           </span>
         </button>
         <button
