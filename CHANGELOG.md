@@ -1,3 +1,17 @@
+# v0.4.86-5 (2026-06-15)
+
+## Release Highlights
+- [FIX] Qoder bulk login: Live Browser Preview gak stuck/freeze lagi — screenshot capture sekarang punya hard timeout 2.5s dan gak bisa poison persist queue
+- [FEAT] Bulk login (Kiro/CodeBuddy/Qoder) sekarang bisa pakai proxy via Proxy Pool dropdown atau custom URL di automation modal
+- [BACKEND] API route bulk-import nerima `proxyPoolId`/`proxyUrl` di body, plus opt-in fallback ke `settings.outboundProxyUrl` lewat flag baru `useOutboundProxyForAutomation`
+
+## Technical Notes
+- Symptom: di Qoder bulk login, Live Browser Preview kadang stuck di frame lama atau gak listening sama sekali. User harus close+reopen modal supaya preview update lagi. Kiro/CodeBuddy gak kena ini.
+- Root cause: `capturePreview()` di `kiroBulkImportManager.js` (parent class) panggil `await page.screenshot(...)` tanpa timeout. Qoder's `processAccount` jalanin `page.evaluate('https://qoder.com/api/v1/me/userplan')` sambil status masih `running` — kalau request itu lambat/hang, screenshot juga ikut blocked. Worse: `persistJobSnapshot` chain semua call lewat `job.persistPromise` yang awaitnya serial. Sekali screenshot hang, semua persist call berikutnya nyangkut. Snapshot file gak pernah ke-update lagi → modal polling baca data stale forever.
+- Why Kiro/CodeBuddy gak kena: mereka gak punya `page.evaluate` panjang waktu status masih `running`. Saving connection di Kiro lewat `socialExchange` (network call ke server kita sendiri, bukan dari dalam Playwright page).
+- Fix: (a) `capturePreview` di-race dengan `setTimeout(2500ms)`. Kalau timeout, return null tapi `lastPreview` lama dipertahankan (bukan dihapus). (b) `persistJobSnapshot` runPersist sekarang catch capturePreview reject + capturePreview itself wrap inner failure dengan return previous imageData. (c) `writeJsonFile` dibungkus try/catch supaya disk error gak break worker. (d) `capturePreviewAccount` jadi method tersendiri, fallback search lebih permissive (any account dengan page hidup, bukan cuma `status === "running"`).
+- Test coverage: 1 vitest case di `tests/unit/kiro-bulk-import-manager.test.js` ("does not let a hung capturePreview block persistJobSnapshot") yang stub `capturePreview` jadi `Promise(() => {})` (never resolves) dan assert `persistJobSnapshot` selesai dalam <4s, file persisted, `lastPreview` lama tetap di tempat.
+
 # v0.4.86-4 (2026-06-14)
 
 ## Release Highlights

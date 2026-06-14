@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   __test__,
@@ -225,5 +228,44 @@ describe("KiroBulkImportManager", () => {
 
     expect(activeOnly).toBeNull();
     expect(withRecentTerminal?.jobId).toBe("job-terminal");
+  });
+
+  it("does not let a hung capturePreview block persistJobSnapshot", async () => {
+    const manager = new KiroBulkImportManager();
+    manager.capturePreview = () => new Promise(() => {});
+    manager.storageDir = path.join(os.tmpdir(), `kiro-bulk-test-${Date.now()}`);
+
+    const job = {
+      jobId: "job-hung",
+      status: "running",
+      concurrency: 1,
+      engine: "chromium",
+      createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      error: null,
+      cancelRequested: false,
+      browser: null,
+      nextIndex: 0,
+      manualFollowups: new Set(),
+      persistPromise: Promise.resolve(),
+      lastPreview: { email: "old@test.com", imageData: "data:image/jpeg;base64,OLD" },
+      lastPreviewCapturedAt: 0,
+      accounts: [],
+    };
+
+    const start = Date.now();
+    await manager.persistJobSnapshot(job, { forcePreview: true });
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(4000);
+    expect(job.lastPreview?.imageData).toBe("data:image/jpeg;base64,OLD");
+
+    const expectedFile = path.join(manager.storageDir, "job-hung.json");
+    expect(fs.existsSync(expectedFile)).toBe(true);
+    const persisted = JSON.parse(fs.readFileSync(expectedFile, "utf8"));
+    expect(persisted.preview?.imageData).toBe("data:image/jpeg;base64,OLD");
+
+    fs.rmSync(manager.storageDir, { recursive: true, force: true });
   });
 });

@@ -22,6 +22,7 @@ const TERMINAL_ACCOUNT_STATUSES = new Set([
 const MAX_ACCOUNT_LOG_ENTRIES = 40;
 const MAX_JOB_ACTIVITY_ENTRIES = 80;
 const PREVIEW_CAPTURE_INTERVAL_MS = 1500;
+const PREVIEW_CAPTURE_TIMEOUT_MS = 2500;
 const RECENT_TERMINAL_JOB_WINDOW_MS = 30 * 60_000;
 const KIRO_BULK_IMPORT_DIR = path.join(DATA_DIR, "kiro-bulk-import");
 const KIRO_BULK_IMPORT_META_FILE = path.join(KIRO_BULK_IMPORT_DIR, "meta.json");
@@ -594,28 +595,58 @@ export class KiroBulkImportManager {
     const runPersist = async () => {
       const shouldCapturePreview = forcePreview || (Date.now() - (job.lastPreviewCapturedAt || 0) >= PREVIEW_CAPTURE_INTERVAL_MS);
       if (shouldCapturePreview) {
-        const preview = await this.capturePreview(job);
+        // Preview capture must never block the persist queue. A hung
+        // page.screenshot used to poison job.persistPromise for the rest of the
+        // job, leaving the modal stuck on a stale image. We hard-cap the wait
+        // and treat any failure as "keep the previous preview".
+        let preview = null;
+        try {
+          preview = await Promise.race([
+            this.capturePreview(job),
+            new Promise((resolve) => setTimeout(() => resolve(null), PREVIEW_CAPTURE_TIMEOUT_MS)),
+          ]);
+        } catch {
+          preview = null;
+        }
         if (preview) {
           job.lastPreview = preview;
         }
         job.lastPreviewCapturedAt = Date.now();
       }
 
-      writeJsonFile(getJobFile(job.jobId, this.storageDir), buildPersistedSnapshot(job));
+      try {
+        writeJsonFile(getJobFile(job.jobId, this.storageDir), buildPersistedSnapshot(job));
+      } catch {
+        // Best-effort persistence; never break the worker over a write failure.
+      }
     };
 
     job.persistPromise = Promise.resolve(job.persistPromise).catch(() => null).then(runPersist);
     await job.persistPromise;
   }
 
-  async capturePreview(job) {
-    const previewAccount = job.accounts.find((account) => account.status === "running" && account.runtimeSession?.page)
-      || job.accounts.find((account) => account.status === "needs_manual" && account.manualSession?.page);
+  capturePreviewAccount(job) {
+    return job.accounts.find((account) => account.status === "running" && account.runtimeSession?.page)
+      || job.accounts.find((account) => account.status === "needs_manual" && account.manualSession?.page)
+      || job.accounts.find((account) => account.runtimeSession?.page)
+      || job.accounts.find((account) => account.manualSession?.page)
+      || null;
+  }
 
+  async capturePreview(job) {
+    const previewAccount = this.capturePreviewAccount(job);
     if (!previewAccount) return null;
 
     const page = previewAccount.runtimeSession?.page || previewAccount.manualSession?.page;
     if (!page) return null;
+
+    const meta = {
+      email: previewAccount.email,
+      workerId: previewAccount.workerId || null,
+      status: previewAccount.status,
+      step: previewAccount.currentStep || null,
+      updatedAt: previewAccount.updatedAt || nowIso(),
+    };
 
     try {
       const screenshot = await page.screenshot({
@@ -627,22 +658,12 @@ export class KiroBulkImportManager {
       });
 
       return {
-        email: previewAccount.email,
-        workerId: previewAccount.workerId || null,
-        status: previewAccount.status,
-        step: previewAccount.currentStep || null,
-        updatedAt: previewAccount.updatedAt || nowIso(),
+        ...meta,
         imageData: `data:image/jpeg;base64,${screenshot.toString("base64")}`,
       };
     } catch {
-      return {
-        email: previewAccount.email,
-        workerId: previewAccount.workerId || null,
-        status: previewAccount.status,
-        step: previewAccount.currentStep || null,
-        updatedAt: previewAccount.updatedAt || nowIso(),
-        imageData: null,
-      };
+      const previousImage = job.lastPreview?.imageData || null;
+      return { ...meta, imageData: previousImage };
     }
   }
 
