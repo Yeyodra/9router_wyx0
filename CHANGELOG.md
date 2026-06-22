@@ -1,3 +1,11 @@
+# v0.5.8-wyx0.1 (2026-06-22)
+
+## Release Highlight
+- Optimisasi CodeBuddy agar stream panjang lebih stabil.
+- Tambahan awal GLM 2 API. Untuk saat ini fokusnya masih website/chat, belum untuk coding assistant.
+- Tambahan CodeBuddy CN dengan API key auth, setting API key, dan automation OTP via 5sim.
+- Sinkronisasi ke upstream 9Router v0.5.8.
+
 # v0.5.8 (2026-06-21)
 
 ## Features
