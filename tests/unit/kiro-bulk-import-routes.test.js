@@ -164,6 +164,17 @@ describe("Kiro bulk import routes", () => {
     expect(response.body.job.jobId).toBe("job-terminal");
   });
 
+  it("does not treat recoverable scope as recent terminal history", async () => {
+    managerMock.getLatestJobWithPreview.mockResolvedValue(null);
+
+    const { GET } = await import("../../src/app/api/oauth/kiro/bulk-import/latest/route.js");
+    const response = await GET({ url: "http://localhost/api/oauth/kiro/bulk-import/latest?scope=recoverable" });
+
+    expect(response.status).toBe(404);
+    expect(managerMock.getLatestJobWithPreview).toHaveBeenCalledWith({ includeRecentTerminal: false });
+    expect(response.body.recoverable).toBe(false);
+  });
+
   it("cancels a known job", async () => {
     managerMock.cancelJob.mockReturnValue({
       jobId: "job-1",

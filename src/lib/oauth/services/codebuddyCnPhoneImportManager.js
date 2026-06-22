@@ -158,6 +158,17 @@ export class CodeBuddyCnPhoneImportManager extends KiroBulkImportManager {
       await wait(10);
     }
   }
+
+  async runJob(jobId) {
+    await super.runJob(jobId);
+    const job = this.jobs.get(jobId);
+    if (!job || job.cancelRequested) return;
+    if (job.accounts.some((account) => account.status === "needs_manual")) {
+      job.status = "needs_manual";
+      job.finishedAt = null;
+      await this.persistJobSnapshot(job, { forcePreview: true });
+    }
+  }
 }
 
 function getSingletonStore() {

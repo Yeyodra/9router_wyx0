@@ -246,7 +246,7 @@ export function buildLookupResponse(job, extras = {}) {
   return {
     found: true,
     stale: false,
-    recoverable: ACTIVE_JOB_STATUSES.has(job.status) || isRecentTerminalJob(job),
+    recoverable: ACTIVE_JOB_STATUSES.has(job.status),
     job,
   };
 }

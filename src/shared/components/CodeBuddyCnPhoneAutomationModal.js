@@ -132,9 +132,14 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
 
   const cancelJob = async () => {
     if (!job?.jobId) return;
-    const res = await fetch(`/api/oauth/${PROVIDER}/bulk-import/${job.jobId}/cancel`, { method: "POST" });
-    const data = await res.json();
-    if (res.ok && data?.job) setJob(data.job);
+    try {
+      const res = await fetch(`/api/oauth/${PROVIDER}/bulk-import/${job.jobId}/cancel`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to cancel job");
+      if (data?.job) setJob(data.job);
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   const openManual = async (workerId) => {
@@ -202,6 +207,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
                 <div className="flex gap-2">
                   {active && <Button size="sm" variant="secondary" onClick={cancelJob}>Cancel</Button>}
                   {terminal && <Button size="sm" onClick={() => { reset(); onSuccess?.(); }}>Done</Button>}
+                  <Button size="sm" variant="ghost" onClick={reset}>Clear</Button>
                 </div>
               </div>
             </div>

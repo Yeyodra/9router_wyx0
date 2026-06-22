@@ -7,7 +7,7 @@ export async function GET(request) {
   const manager = getQoderBulkImportManager();
   const searchParams = new URL(request.url).searchParams;
   const scope = searchParams.get("scope");
-  const includeRecentTerminal = scope === "recent" || scope === "recoverable" || scope === "all";
+  const includeRecentTerminal = scope === "recent" || scope === "all";
   const job = await manager.getLatestJobWithPreview({ includeRecentTerminal });
 
   if (!job) {
