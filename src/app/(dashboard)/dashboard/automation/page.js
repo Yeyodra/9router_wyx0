@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge, Button, BulkAccountAutomationModal, Card, CardSkeleton, KiroOAuthWrapper, OAuthModal } from "@/shared/components";
+import { Badge, Button, BulkAccountAutomationModal, Card, CardSkeleton, CodeBuddyCnPhoneAutomationModal, KiroOAuthWrapper, OAuthModal } from "@/shared/components";
 import { FREE_PROVIDERS } from "@/shared/constants/providers";
 
 function getConnectionLabel(count) {
@@ -284,6 +284,35 @@ function CodeBuddyAutomationPanel({ providerInfo, onRefresh }) {
   );
 }
 
+function CodeBuddyCnAutomationPanel({ onRefresh }) {
+  const [isPhoneOpen, setIsPhoneOpen] = useState(false);
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button
+          type="button"
+          onClick={() => setIsPhoneOpen(true)}
+          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
+            <span className="material-symbols-outlined text-[20px] text-primary">sms</span>
+            5sim Phone OTP + Generate Key
+          </span>
+          <span className="text-xs leading-relaxed text-text-muted">
+            Buy Hong Kong CodeBuddy numbers from 5sim, login to CodeBuddy CN, create a CN-styled API key, and save it.
+          </span>
+        </button>
+      </div>
+      <CodeBuddyCnPhoneAutomationModal
+        isOpen={isPhoneOpen}
+        onSuccess={onRefresh}
+        onClose={() => setIsPhoneOpen(false)}
+      />
+    </>
+  );
+}
+
 function QoderAutomationPanel({ providerInfo, onRefresh }) {
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [isOAuthOpen, setIsOAuthOpen] = useState(false);
@@ -356,6 +385,14 @@ const AUTOMATION_PROVIDERS = [
     description: "Bulk GSuite automation and browser OAuth polling login.",
     supportedModes: ["bulk-account", "device-oauth"],
     component: CodeBuddyAutomationPanel,
+  },
+  {
+    id: "codebuddy-cn",
+    label: "CodeBuddy CN",
+    icon: "sms",
+    description: "Phone OTP automation via 5sim and generated CN API keys.",
+    supportedModes: ["5sim-phone", "api-key"],
+    component: CodeBuddyCnAutomationPanel,
   },
   {
     id: "qoder",

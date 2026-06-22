@@ -8,6 +8,7 @@ import {
   KIRO_BULK_IMPORT_MAX_CONCURRENCY,
   KIRO_BULK_IMPORT_MIN_CONCURRENCY,
   KiroBulkImportManager,
+  buildLookupResponse,
 } from "../../src/lib/oauth/services/kiroBulkImportManager.js";
 
 function createFakeBrowser() {
@@ -228,6 +229,20 @@ describe("KiroBulkImportManager", () => {
 
     expect(activeOnly).toBeNull();
     expect(withRecentTerminal?.jobId).toBe("job-terminal");
+  });
+
+  it("marks terminal jobs as found but not recoverable", async () => {
+    const terminalJob = {
+      jobId: "job-terminal",
+      status: "failed",
+      finishedAt: new Date().toISOString(),
+    };
+
+    const response = buildLookupResponse(terminalJob);
+
+    expect(response.found).toBe(true);
+    expect(response.recoverable).toBe(false);
+    expect(response.job).toBe(terminalJob);
   });
 
   it("does not let a hung capturePreview block persistJobSnapshot", async () => {
