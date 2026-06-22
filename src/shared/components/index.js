@@ -38,6 +38,7 @@ export { default as Tooltip } from "./Tooltip";
 export { default as ProviderInfoCard } from "./ProviderInfoCard";
 export { default as CapacityBadges } from "./CapacityBadges";
 export { default as BulkAccountAutomationModal } from "./BulkAccountAutomationModal";
+export { default as CodeBuddyCnPhoneAutomationModal } from "./CodeBuddyCnPhoneAutomationModal";
 export { default as CodeBuddyQuotaCookieModal } from "./CodeBuddyQuotaCookieModal";
 export { default as MergeConnectionsModal } from "./MergeConnectionsModal";
 export { default as Pagination } from "./Pagination";
