@@ -27,7 +27,7 @@ export async function POST(request) {
       );
     }
 
-    const { proxyUrl, error: proxyError } = await resolveBulkImportProxy({
+    const { proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, error: proxyError } = await resolveBulkImportProxy({
       proxyPoolId: body?.proxyPoolId,
       proxyUrl: body?.proxyUrl,
     });
@@ -41,6 +41,10 @@ export async function POST(request) {
       concurrency: body?.concurrency,
       engine: body?.engine,
       proxyUrl,
+      proxyUrls,
+      proxyMode,
+      proxyPoolId,
+      proxySource,
     });
 
     return NextResponse.json({

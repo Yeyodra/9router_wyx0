@@ -872,14 +872,14 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
     job.manualFollowups.add(followupPromise);
   }
 
-  async processAccount(job, account, workerId) {
-    if (job.cancelRequested || !job.browser) {
+  async processAccount(job, account, workerId, browser = job.browser) {
+    if (job.cancelRequested || !browser) {
       this.finalizeAccount(account, "cancelled", { error: "Job cancelled" });
       return;
     }
 
-    const { context, page } = await createFreshContext(job.browser);
-    account.runtimeSession = { context, page };
+    const { context, page } = await createFreshContext(browser);
+    account.runtimeSession = { context, page, proxyUrl: browser.__ninerouterProxyUrl || job.proxyUrl || null };
 
     try {
       this.setAccountStep(account, "preparing_worker", `Worker ${workerId} is preparing a browser context`);

@@ -20,6 +20,7 @@ import {
 } from "@/shared/constants/providers";
 import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
+import { getProviderAuthTypes } from "@/shared/utils/providerAuthTypes";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
@@ -118,13 +119,23 @@ export default function ProvidersPage() {
     !searchQuery.trim() ||
     name.toLowerCase().includes(searchQuery.trim().toLowerCase());
 
+  const getProviderCardAuthTypes = (providerId, fallbackAuthType) => {
+    const providerInfo =
+      OAUTH_PROVIDERS[providerId] ||
+      APIKEY_PROVIDERS[providerId] ||
+      FREE_PROVIDERS[providerId] ||
+      FREE_TIER_PROVIDERS[providerId] ||
+      WEB_COOKIE_PROVIDERS[providerId];
+    return getProviderAuthTypes(providerInfo, fallbackAuthType);
+  };
+
   const sortByPriority = (entries, authType) =>
     [...entries].sort(([ka, a], [kb, b]) => {
       const pa = a.priority ?? 999;
       const pb = b.priority ?? 999;
       if (pa !== pb) return pa - pb;
-      const sa = getProviderStats(ka, authType);
-      const sb = getProviderStats(kb, authType);
+      const sa = getProviderStats(ka, getProviderCardAuthTypes(ka, authType));
+      const sb = getProviderStats(kb, getProviderCardAuthTypes(kb, authType));
       const ca = sa.connected > 0 ? 1 : 0;
       const cb = sb.connected > 0 ? 1 : 0;
       if (ca !== cb) return cb - ca;
@@ -136,8 +147,8 @@ export default function ProvidersPage() {
       const pa = a.priority ?? 999;
       const pb = b.priority ?? 999;
       if (pa !== pb) return pa - pb;
-      const sa = getProviderStats(a.id, authType);
-      const sb = getProviderStats(b.id, authType);
+      const sa = getProviderStats(a.id, getProviderCardAuthTypes(a.id, authType));
+      const sb = getProviderStats(b.id, getProviderCardAuthTypes(b.id, authType));
       const ca = sa.connected > 0 ? 1 : 0;
       const cb = sb.connected > 0 ? 1 : 0;
       if (ca !== cb) return cb - ca;
@@ -423,16 +434,21 @@ export default function ProvidersPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {oauthEntries.map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-              authType="oauth"
-              onToggle={(active) => handleToggleProvider(key, "oauth", active)}
-            />
-          ))}
+          {oauthEntries.map(([key, info]) => {
+            const authTypes = getProviderCardAuthTypes(key, "oauth");
+            return (
+              <ProviderCard
+                key={key}
+                providerId={key}
+                provider={info}
+                stats={getProviderStats(key, authTypes)}
+                authType="oauth"
+                onToggle={(active) =>
+                  handleToggleProvider(key, authTypes, active)
+                }
+              />
+            );
+          })}
         </div>
       </div>
       )}

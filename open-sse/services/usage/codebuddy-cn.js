@@ -31,6 +31,16 @@ function num(precise, plain) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function containsCjk(value) {
+  return /[\u3400-\u9FFF]/u.test(String(value || ""));
+}
+
+function englishOrFallback(value, fallback) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || containsCjk(text)) return fallback;
+  return text;
+}
+
 // Label a refill pack by its cycle length (Monthly is the common CodeBuddy case).
 function refillCadence(acc) {
   const start = parseResetTime(acc.CycleStartTime);
@@ -70,7 +80,7 @@ export async function getCodeBuddyCnUsage(accessToken, apiKey, providerSpecificD
 
     const json = await response.json();
     if (json?.code !== 0) {
-      return { message: `CodeBuddy CN quota error: ${json?.msg || "unknown"}` };
+      return { message: `CodeBuddy CN quota error: ${englishOrFallback(json?.msg, "upstream request failed")}` };
     }
 
     const data = json?.data?.Response?.Data || {};
@@ -122,7 +132,7 @@ export async function getCodeBuddyCnUsage(accessToken, apiKey, providerSpecificD
     });
 
     const basePkg = refills[0] || accounts[0] || {};
-    const plan = basePkg.PackageName || basePkg.SubProductName || "CodeBuddy CN";
+    const plan = englishOrFallback(basePkg.PackageName || basePkg.SubProductName, "CodeBuddy CN");
 
     return { plan, quotas };
   } catch (error) {

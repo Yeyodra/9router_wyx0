@@ -7,6 +7,11 @@ import Badge from "./Badge";
 import Button from "./Button";
 import Input from "./Input";
 import Modal from "./Modal";
+import {
+  formatBrowserProxyPoolOption,
+  getBrowserProxyPools,
+} from "@/lib/oauth/services/bulkImportProxyOptions.js";
+import { readJsonResponse } from "@/shared/utils/httpResponse.js";
 
 const DEFAULT_CONCURRENCY = 4;
 const ACTIVE_JOB_STATUSES = new Set(["queued", "running", "needs_manual"]);
@@ -16,7 +21,6 @@ const ENGINE_OPTIONS = [
   { value: "chromium", label: "Chromium (default, fast)" },
   { value: "camoufox", label: "Camoufox (stealth Firefox, slower)" },
 ];
-const RELAY_POOL_TYPES = new Set(["vercel", "cloudflare", "deno"]);
 
 function describeWorkerLimit(limitedBy) {
   if (limitedBy === "ram") return "RAM";
@@ -57,13 +61,13 @@ AccountStatusBadge.propTypes = {
 
 async function fetchJob(provider, jobId) {
   const res = await fetch(`/api/oauth/${provider}/bulk-import/${jobId}`, { cache: "no-store" });
-  const data = await res.json();
+  const data = await readJsonResponse(res, "Failed to fetch bulk login job");
   return { res, data };
 }
 
 async function fetchLatestJob(provider, scope = "recoverable") {
   const res = await fetch(`/api/oauth/${provider}/bulk-import/latest?scope=${encodeURIComponent(scope)}`, { cache: "no-store" });
-  const data = await res.json();
+  const data = await readJsonResponse(res, "Failed to fetch latest bulk login job");
   return { res, data };
 }
 
@@ -132,7 +136,7 @@ export default function BulkAccountAutomationModal({
       setSystemSpecLoading(true);
       try {
         const res = await fetch("/api/system/specs", { cache: "no-store" });
-        const data = await res.json();
+        const data = await readJsonResponse(res, "Failed to detect system specs");
         if (cancelled || !data?.success) return;
         setSystemSpecInfo(data);
         setConcurrency((current) => {
@@ -158,14 +162,11 @@ export default function BulkAccountAutomationModal({
     let cancelled = false;
     const loadPools = async () => {
       try {
-        const res = await fetch("/api/proxy-pools", { cache: "no-store" });
+        const res = await fetch("/api/proxy-pools?isActive=true", { cache: "no-store" });
         if (!res.ok) return;
-        const data = await res.json();
+        const data = await readJsonResponse(res, "Failed to fetch proxy pools");
         if (cancelled) return;
-        const pools = (data.pools || data || []).filter(
-          (pool) => pool.isActive && !RELAY_POOL_TYPES.has(pool.type)
-        );
-        setProxyPools(pools);
+        setProxyPools(getBrowserProxyPools(data));
       } catch {
         // noop
       }
@@ -273,8 +274,8 @@ export default function BulkAccountAutomationModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(postBody),
       });
-      const data = await res.json();
-      if (!res.ok) {
+      const data = await readJsonResponse(res, "Bulk account import failed");
+      if (!res.ok || data.error) {
         const invalidHint = Array.isArray(data.invalidLines) && data.invalidLines.length > 0
           ? ` Invalid lines: ${data.invalidLines.join(", ")}`
           : "";
@@ -300,8 +301,8 @@ export default function BulkAccountAutomationModal({
       const res = await fetch(`/api/oauth/${provider}/bulk-import/${activeJob.jobId}/cancel`, {
         method: "POST",
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to cancel job");
+      const data = await readJsonResponse(res, "Failed to cancel job");
+      if (!res.ok || data.error) throw new Error(data.error || "Failed to cancel job");
       if (data.job) setActiveJob(data.job);
     } catch (err) {
       setError(err.message);
@@ -315,8 +316,8 @@ export default function BulkAccountAutomationModal({
       const res = await fetch(`/api/oauth/${provider}/bulk-import/${activeJob.jobId}/manual/${workerId}`, {
         method: "POST",
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to open manual session");
+      const data = await readJsonResponse(res, "Failed to open manual session");
+      if (!res.ok || data.error) throw new Error(data.error || "Failed to open manual session");
       if (data.job) setActiveJob(data.job);
     } catch (err) {
       setError(err.message);
@@ -435,8 +436,8 @@ export default function BulkAccountAutomationModal({
                   >
                     <option value="">None</option>
                     {proxyPools.map((pool) => (
-                      <option key={pool.id} value={pool.id}>
-                        {pool.name || pool.proxyUrl || pool.id}
+                      <option key={pool.id} value={pool.id} disabled={!pool.browserCompatible}>
+                        {formatBrowserProxyPoolOption(pool)}
                       </option>
                     ))}
                   </select>
@@ -453,7 +454,7 @@ export default function BulkAccountAutomationModal({
                 </div>
               </div>
               <p className="mt-1 text-xs text-text-muted">
-                Browsers will route Google login traffic through the chosen proxy. Relay-style pools (Vercel, Cloudflare, Deno) are excluded because they only rewrite API URLs.
+                Browsers will route login traffic through the chosen proxy. Multiple URLs in a pool or custom field rotate round-robin across workers. Relay-style pools (Vercel, Cloudflare, Deno) are excluded because they only rewrite API URLs.
               </p>
             </div>
           </>

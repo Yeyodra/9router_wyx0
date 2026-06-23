@@ -492,6 +492,20 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = res.status !== 401 && res.status !== 403;
         return { valid, error: valid ? null : "Invalid API key" };
       }
+      case "codebuddy-cn": {
+        const res = await fetchWithConnectionProxy(PROVIDERS["codebuddy-cn"].usage.url, {
+          method: "POST",
+          headers: {
+            ...(PROVIDERS["codebuddy-cn"].headers || {}),
+            Authorization: `Bearer ${connection.apiKey}`,
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        }, effectiveProxy);
+        const valid = res.status !== 401 && res.status !== 403;
+        return { valid, error: valid ? null : "Invalid CodeBuddy CN API key" };
+      }
       case "glm": {
         const res = await fetchWithConnectionProxy("https://api.z.ai/api/anthropic/v1/messages", {
           method: "POST",
@@ -693,6 +707,10 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
     return { valid: false, error: err.message };
   }
 }
+
+export const __test__ = {
+  testApiKeyConnection,
+};
 
 /**
  * Test a single connection by ID, update DB, and return result.

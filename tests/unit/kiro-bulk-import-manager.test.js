@@ -121,6 +121,53 @@ describe("KiroBulkImportManager", () => {
     expect(finishedJob.accounts.every((account) => account.connectionId)).toBe(true);
   });
 
+  it("launches worker browsers with round-robin proxy URLs", async () => {
+    const launchedProxyUrls = [];
+    const manager = new KiroBulkImportManager({
+      browserLauncher: async (job) => {
+        launchedProxyUrls.push(job.proxyUrl || null);
+        return createFakeBrowser();
+      },
+      kiroServiceFactory: () => ({
+        createSocialAuthorization() {
+          return {
+            authUrl: "https://example.com",
+            codeVerifier: "verifier",
+          };
+        },
+      }),
+      googleAutomation: async ({ email }) => ({
+        status: "success",
+        code: `code-${email}`,
+      }),
+      socialExchange: async ({ code }) => ({
+        connection: {
+          id: `conn-${code}`,
+        },
+      }),
+    });
+
+    const startedJob = await manager.startJob({
+      accounts: [
+        "user1@gmail.com|pw1",
+        "user2@gmail.com|pw2",
+      ],
+      concurrency: 2,
+      proxyUrls: ["http://proxy-one:8080", "http://proxy-two:8080"],
+      proxyMode: "round-robin",
+    });
+
+    const finishedJob = await waitFor(() => {
+      const job = manager.getJob(startedJob.jobId);
+      return job && job.status === "completed" ? job : null;
+    });
+
+    expect(launchedProxyUrls.sort()).toEqual(["http://proxy-one:8080", "http://proxy-two:8080"]);
+    expect(finishedJob.proxyMode).toBe("round-robin");
+    expect(finishedJob.proxyCount).toBe(2);
+    expect(finishedJob.summary.success).toBe(2);
+  });
+
   it("cancels queued work and marks the job cancelled", async () => {
     const manager = new KiroBulkImportManager({
       browserLauncher: async () => createFakeBrowser(),

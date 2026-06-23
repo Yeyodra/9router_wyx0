@@ -42,7 +42,14 @@ vi.mock("@/lib/oauth/services/kiroBulkImportManager", () => ({
 }));
 
 vi.mock("@/lib/oauth/services/bulkImportProxyResolver", () => ({
-  resolveBulkImportProxy: vi.fn(async () => ({ proxyUrl: null, error: null })),
+  resolveBulkImportProxy: vi.fn(async () => ({
+    proxyUrl: null,
+    proxyUrls: [],
+    proxyMode: "none",
+    proxyPoolId: null,
+    proxySource: null,
+    error: null,
+  })),
 }));
 
 describe("Kiro bulk import routes", () => {
@@ -89,6 +96,10 @@ describe("Kiro bulk import routes", () => {
       concurrency: 6,
       engine: undefined,
       proxyUrl: null,
+      proxyUrls: [],
+      proxyMode: "none",
+      proxyPoolId: null,
+      proxySource: null,
     });
     expect(response.body.job.jobId).toBe("job-1");
   });

@@ -153,6 +153,14 @@ function buildSummary(accounts) {
   };
 }
 
+function resolveFinishedJobStatus(accounts) {
+  const summary = buildSummary(accounts);
+  if (summary.needs_manual > 0) return "needs_manual";
+  if (summary.success > 0) return "completed";
+  if (summary.failed > 0) return "failed";
+  return "completed";
+}
+
 function createLogEntry(step, message, level = "info") {
   return {
     id: randomUUID(),
@@ -210,6 +218,10 @@ function sanitizeJob(job, extras = {}) {
     status: job.status,
     summary: buildSummary(job.accounts),
     concurrency: job.concurrency,
+    proxyMode: job.proxyMode || "none",
+    proxyPoolId: job.proxyPoolId || null,
+    proxySource: job.proxySource || null,
+    proxyCount: Array.isArray(job.proxyUrls) ? job.proxyUrls.length : (job.proxyUrl ? 1 : 0),
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
@@ -256,6 +268,17 @@ async function defaultBrowserLauncher(job) {
   return launchBulkImportBrowser({ engine: job?.engine || "chromium", proxyUrl: job?.proxyUrl || undefined });
 }
 
+function normalizeProxyUrls(proxyUrl, proxyUrls) {
+  const values = Array.isArray(proxyUrls) ? proxyUrls : (proxyUrl ? [proxyUrl] : []);
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function resolveWorkerProxyUrl(job, workerId) {
+  const proxyUrls = Array.isArray(job.proxyUrls) ? job.proxyUrls : [];
+  if (proxyUrls.length > 1) return proxyUrls[(Math.max(1, workerId) - 1) % proxyUrls.length];
+  return job.proxyUrl || proxyUrls[0] || null;
+}
+
 async function defaultSocialExchange(args) {
   const { exchangeAndSaveKiroSocialConnection } = await import("./kiroConnections.js");
   return exchangeAndSaveKiroSocialConnection(args);
@@ -293,10 +316,15 @@ async function relaunchAsHeaded(account) {
     lastUrl = "";
   }
 
-  const { chromium } = await import("playwright");
   let newBrowser;
   try {
-    newBrowser = await chromium.launch({ headless: false, args: ["--start-maximized"] });
+    const { launchBulkImportBrowser } = await import("./bulkImportBrowserEngine.js");
+    newBrowser = await launchBulkImportBrowser({
+      engine: "chromium",
+      headless: false,
+      args: ["--start-maximized"],
+      proxyUrl: account?.manualSession?.proxyUrl || account?.runtimeSession?.proxyUrl || null,
+    });
   } catch {
     return false;
   }
@@ -410,7 +438,7 @@ export class KiroBulkImportManager {
     this.latestJobId = readPersistedLatestJobId(this.metaFile);
   }
 
-  async startJob({ accounts, concurrency, engine, proxyUrl }) {
+  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, jobFields }) {
     const { parsed, invalidLines } = parseKiroBulkAccounts(accounts);
     if (!parsed.length) {
       const error = invalidLines.length > 0
@@ -430,18 +458,24 @@ export class KiroBulkImportManager {
     const createdAt = nowIso();
     const { normalizeBulkImportEngine, DEFAULT_BULK_IMPORT_ENGINE } = await import("./bulkImportBrowserEngine.js");
     const resolvedEngine = engine ? normalizeBulkImportEngine(engine) : DEFAULT_BULK_IMPORT_ENGINE;
+    const resolvedProxyUrls = normalizeProxyUrls(proxyUrl, proxyUrls);
     const job = {
       jobId,
       status: "running",
       concurrency: clampConcurrency(concurrency),
       engine: resolvedEngine,
-      proxyUrl: proxyUrl || null,
+      proxyUrl: resolvedProxyUrls[0] || null,
+      proxyUrls: resolvedProxyUrls,
+      proxyMode: proxyMode || (resolvedProxyUrls.length > 1 ? "round-robin" : (resolvedProxyUrls.length === 1 ? "single" : "none")),
+      proxyPoolId: proxyPoolId || null,
+      proxySource: proxySource || null,
       createdAt,
       startedAt: createdAt,
       finishedAt: null,
       error: null,
       cancelRequested: false,
       browser: null,
+      workerBrowsers: new Set(),
       nextIndex: 0,
       manualFollowups: new Set(),
       persistPromise: Promise.resolve(),
@@ -461,6 +495,7 @@ export class KiroBulkImportManager {
         updatedAt: createdAt,
         logs: [createLogEntry("queued", "Queued and waiting for an available worker")],
       })),
+      ...(jobFields || {}),
     };
 
     this.jobs.set(jobId, job);
@@ -517,6 +552,12 @@ export class KiroBulkImportManager {
     if (job.browser) {
       void job.browser.close().catch(() => null);
       job.browser = null;
+    }
+    if (job.workerBrowsers) {
+      for (const browser of job.workerBrowsers) {
+        void browser.close().catch(() => null);
+      }
+      job.workerBrowsers.clear();
     }
 
     void this.persistJobSnapshot(job, { forcePreview: true });
@@ -751,17 +792,17 @@ export class KiroBulkImportManager {
     job.manualFollowups.add(followupPromise);
   }
 
-  async processAccount(job, account, workerId) {
-    if (job.cancelRequested || !job.browser) {
+  async processAccount(job, account, workerId, browser = job.browser) {
+    if (job.cancelRequested || !browser) {
       this.finalizeAccount(account, "cancelled", { error: "Job cancelled" });
       return;
     }
 
     const kiroService = this.kiroServiceFactory();
     const socialAuth = kiroService.createSocialAuthorization("google");
-    const { context, page } = await createFreshContext(job.browser);
+    const { context, page } = await createFreshContext(browser);
     const callbackPromise = createKiroCallbackMonitor(context, page);
-    account.runtimeSession = { context, page };
+    account.runtimeSession = { context, page, proxyUrl: browser.__ninerouterProxyUrl || job.proxyUrl || null };
 
     try {
       this.setAccountStep(account, "preparing_worker", `Worker ${workerId} is preparing a browser context`);
@@ -848,11 +889,27 @@ export class KiroBulkImportManager {
     }
   }
 
-  async runWorker(job, workerId) {
-    while (!job.cancelRequested) {
-      const account = this.dequeueAccount(job, workerId);
-      if (!account) return;
-      await this.processAccount(job, account, workerId);
+  async runWorker(job, workerId, browser = job.browser) {
+    let workerBrowser = browser;
+    const ownsBrowser = !workerBrowser;
+    try {
+      if (!workerBrowser) {
+        const proxyUrl = resolveWorkerProxyUrl(job, workerId);
+        workerBrowser = await this.browserLauncher({ ...job, proxyUrl });
+        workerBrowser.__ninerouterProxyUrl = proxyUrl || null;
+        job.workerBrowsers.add(workerBrowser);
+      }
+
+      while (!job.cancelRequested) {
+        const account = this.dequeueAccount(job, workerId);
+        if (!account) return;
+        await this.processAccount(job, account, workerId, workerBrowser);
+      }
+    } finally {
+      if (ownsBrowser && workerBrowser && job.cancelRequested) {
+        job.workerBrowsers.delete(workerBrowser);
+        await workerBrowser.close().catch(() => null);
+      }
     }
   }
 
@@ -861,7 +918,11 @@ export class KiroBulkImportManager {
     if (!job) return;
 
     try {
-      job.browser = await this.browserLauncher(job);
+      const useWorkerBrowsers = Array.isArray(job.proxyUrls) && job.proxyUrls.length > 1;
+      if (!useWorkerBrowsers) {
+        job.browser = await this.browserLauncher(job);
+        job.browser.__ninerouterProxyUrl = job.proxyUrl || null;
+      }
       job.accounts.forEach((account) => {
         if (account.status === "queued" && (account.logs || []).length === 1) {
           this.setAccountStep(account, "waiting_for_worker", "Waiting for a free worker");
@@ -869,7 +930,11 @@ export class KiroBulkImportManager {
       });
       await this.persistJobSnapshot(job, { forcePreview: false });
       const workerCount = Math.min(job.concurrency, Math.max(job.accounts.length, 1));
-      const workers = Array.from({ length: workerCount }, (_, index) => this.runWorker(job, index + 1));
+      const workers = Array.from({ length: workerCount }, (_, index) => this.runWorker(
+        job,
+        index + 1,
+        useWorkerBrowsers ? null : job.browser
+      ));
 
       await Promise.allSettled(workers);
 
@@ -889,7 +954,10 @@ export class KiroBulkImportManager {
           }
         });
       } else {
-        job.status = "completed";
+        job.status = resolveFinishedJobStatus(job.accounts);
+        if (job.status === "failed") {
+          job.error = "All accounts failed.";
+        }
       }
       await this.persistJobSnapshot(job, { forcePreview: true });
     } catch (error) {
@@ -911,7 +979,11 @@ export class KiroBulkImportManager {
         await job.browser.close().catch(() => null);
         job.browser = null;
       }
-      job.finishedAt = nowIso();
+      if (job.workerBrowsers) {
+        await Promise.allSettled([...job.workerBrowsers].map((browser) => browser.close().catch(() => null)));
+        job.workerBrowsers.clear();
+      }
+      job.finishedAt = job.status === "needs_manual" ? null : nowIso();
       await this.persistJobSnapshot(job, { forcePreview: true });
     }
   }
@@ -935,6 +1007,7 @@ export const __test__ = {
   parseKiroBulkAccounts,
   sanitizeJob,
   buildSummary,
+  resolveFinishedJobStatus,
   isRecentTerminalJob,
   buildLookupResponse,
 };

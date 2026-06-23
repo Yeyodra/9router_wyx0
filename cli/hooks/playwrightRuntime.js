@@ -7,11 +7,21 @@
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { createRequire } = require("module");
 
-const { runNpmInstall, getRuntimeDir, getRuntimeNodeModules } = require("./sqliteRuntime");
+const { getRuntimeNodeModules } = require("./sqliteRuntime");
+const {
+  PLAYWRIGHT_VERSION,
+  configureAutomationBrowserEnv,
+  ensureAutomationRuntimeDir,
+  getAutomationRuntimeDir,
+  getAutomationRuntimeNodeModules,
+  installAutomationPackages,
+  requireAutomationPackage,
+  resolveAutomationPackage,
+} = require("./automationRuntime");
 
 const PLAYWRIGHT_PACKAGE = "playwright";
-const PLAYWRIGHT_VERSION = "^1.54.2";
 
 let cachedReady = null;
 
@@ -45,35 +55,42 @@ function findBundledPlaywrightDirs() {
   return dirs;
 }
 
-function tryRequirePlaywright() {
-  // 1) Standard Node resolution (works when running from source where
-  //    playwright is in the root node_modules, or when something else
-  //    has already pinned NODE_PATH).
+function requirePackageFromDir(packageDir, packageName) {
   try {
-    return require(PLAYWRIGHT_PACKAGE);
+    return createRequire(path.join(packageDir, "package.json"))(packageName);
+  } catch {
+    return null;
+  }
+}
+
+function tryRequirePlaywright() {
+  configureAutomationBrowserEnv();
+  try {
+    return requireAutomationPackage(PLAYWRIGHT_PACKAGE);
   } catch {}
 
-  // 2) User-writable runtime dir (lazy-installed by ensurePlaywrightPackage).
   try {
     const runtimeNm = getRuntimeNodeModules();
     const candidate = path.join(runtimeNm, PLAYWRIGHT_PACKAGE);
     if (fs.existsSync(path.join(candidate, "package.json"))) {
-      return require(candidate);
+      return requirePackageFromDir(candidate, PLAYWRIGHT_PACKAGE);
     }
   } catch {}
 
-  // 3) Bundled location inside the published wyxrouter package
-  //    (`<pkg-root>/app/node_modules/playwright`). Without this probe the
-  //    auto-install path would always need to re-download playwright into
-  //    %APPDATA%/9router/runtime even though a working copy already ships
-  //    with the global install.
   for (const candidate of findBundledPlaywrightDirs()) {
-    try {
-      return require(candidate);
-    } catch {}
+    const mod = requirePackageFromDir(candidate, PLAYWRIGHT_PACKAGE);
+    if (mod) return mod;
   }
 
+  try {
+    return require(PLAYWRIGHT_PACKAGE);
+  } catch {}
+
   return null;
+}
+
+function hasAutomationPlaywrightPackage() {
+  return fs.existsSync(path.join(getAutomationRuntimeNodeModules(), PLAYWRIGHT_PACKAGE, "package.json"));
 }
 
 function isChromiumBinaryAvailable() {
@@ -92,6 +109,14 @@ function isChromiumBinaryAvailable() {
 function findCli() {
   const candidates = [];
   try {
+    const pwPkg = resolveAutomationPackage("playwright/package.json");
+    candidates.push(path.join(path.dirname(pwPkg), "cli.js"));
+  } catch {}
+  try {
+    const pwCorePkg = resolveAutomationPackage("playwright-core/package.json");
+    candidates.push(path.join(path.dirname(pwCorePkg), "cli.js"));
+  } catch {}
+  try {
     const pwPkg = require.resolve("playwright/package.json");
     candidates.push(path.join(path.dirname(pwPkg), "cli.js"));
   } catch {}
@@ -100,9 +125,17 @@ function findCli() {
     candidates.push(path.join(path.dirname(pwCorePkg), "cli.js"));
   } catch {}
   try {
+    candidates.push(path.join(getAutomationRuntimeNodeModules(), "playwright", "cli.js"));
+    candidates.push(path.join(getAutomationRuntimeNodeModules(), "playwright-core", "cli.js"));
+  } catch {}
+  try {
     candidates.push(path.join(getRuntimeNodeModules(), "playwright", "cli.js"));
     candidates.push(path.join(getRuntimeNodeModules(), "playwright-core", "cli.js"));
   } catch {}
+  for (const candidateDir of findBundledPlaywrightDirs()) {
+    candidates.push(path.join(candidateDir, "cli.js"));
+    candidates.push(path.join(path.dirname(path.dirname(candidateDir)), "playwright-core", "cli.js"));
+  }
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) return candidate;
   }
@@ -127,14 +160,13 @@ function summarizeInstallStderr(stderr = "") {
 }
 
 function ensurePlaywrightPackage({ silent = false } = {}) {
-  const mod = tryRequirePlaywright();
+  ensureAutomationRuntimeDir();
+  const mod = hasAutomationPlaywrightPackage() ? tryRequirePlaywright() : null;
   if (mod) return { ok: true, module: mod };
 
   if (!silent) console.log("⏳ Installing playwright package (first run)...");
-  const installRes = runNpmInstall({
-    cwd: getRuntimeDir(),
-    pkgs: [`${PLAYWRIGHT_PACKAGE}@${PLAYWRIGHT_VERSION}`],
-    extraArgs: ["--no-save"],
+  const installRes = installAutomationPackages([`${PLAYWRIGHT_PACKAGE}@${PLAYWRIGHT_VERSION}`], {
+    silent,
     timeout: 300_000,
   });
 
@@ -148,13 +180,13 @@ function ensurePlaywrightPackage({ silent = false } = {}) {
 
   const installed = tryRequirePlaywright();
   if (!installed) {
-    const runtimeNm = getRuntimeNodeModules();
+    const runtimeNm = getAutomationRuntimeNodeModules();
     const targetPkg = path.join(runtimeNm, PLAYWRIGHT_PACKAGE, "package.json");
     const exists = fs.existsSync(targetPkg);
     return {
       ok: false,
       reason: exists
-        ? `playwright was installed to ${runtimeNm} but require() still fails — likely a Node module resolution issue. Add NODE_PATH=${runtimeNm} to your shell or reinstall wyxrouter`
+        ? `playwright was installed to ${runtimeNm} but the automation-runtime resolver could not load it`
         : `npm install reported success but ${targetPkg} is missing — npm may have installed to a different cwd`,
     };
   }
@@ -162,6 +194,7 @@ function ensurePlaywrightPackage({ silent = false } = {}) {
 }
 
 function runInstall({ silent = false, timeout = 600_000 } = {}) {
+  configureAutomationBrowserEnv();
   const cliPath = findCli();
   if (!cliPath) {
     return { ok: false, reason: "playwright cli not resolvable" };
@@ -173,6 +206,7 @@ function runInstall({ silent = false, timeout = 600_000 } = {}) {
     stdio: silent ? ["ignore", "pipe", "pipe"] : "inherit",
     timeout,
     encoding: "utf8",
+    env: configureAutomationBrowserEnv({ ...process.env }),
   });
 
   if (res.status === 0) {
@@ -198,7 +232,7 @@ function ensurePlaywrightRuntime({ silent = false, timeout } = {}) {
     cachedReady = false;
     const error = new Error(
       `Playwright not available. ${pkg.reason}. ` +
-      `Run "npm install -g playwright && npx playwright install chromium" manually, then retry.`
+      `Fix the 9router automation runtime at ${getAutomationRuntimeDir()}, then restart and retry.`
     );
     error.code = "PLAYWRIGHT_PACKAGE_MISSING";
     return { ok: false, error };
@@ -218,18 +252,17 @@ function ensurePlaywrightRuntime({ silent = false, timeout } = {}) {
   cachedReady = false;
   const error = new Error(
     `Playwright Chromium not available. ${result.reason}. ` +
-    `Run "npx playwright install chromium" manually, then retry.`
+    `Fix the 9router automation runtime at ${getAutomationRuntimeDir()}, then restart and retry.`
   );
   error.code = "PLAYWRIGHT_CHROMIUM_MISSING";
   return { ok: false, error };
 }
 
 function installPlaywrightOnly({ silent = false, timeout = 600_000 } = {}) {
+  ensureAutomationRuntimeDir();
   if (!silent) console.log("⏳ Installing playwright package...");
-  const installRes = runNpmInstall({
-    cwd: getRuntimeDir(),
-    pkgs: [`${PLAYWRIGHT_PACKAGE}@${PLAYWRIGHT_VERSION}`],
-    extraArgs: ["--no-save"],
+  const installRes = installAutomationPackages([`${PLAYWRIGHT_PACKAGE}@${PLAYWRIGHT_VERSION}`], {
+    silent,
     timeout: 300_000,
   });
 
@@ -238,7 +271,7 @@ function installPlaywrightOnly({ silent = false, timeout = 600_000 } = {}) {
     return { ok: false, reason };
   }
 
-  const cliPath = path.join(getRuntimeNodeModules(), PLAYWRIGHT_PACKAGE, "cli.js");
+  const cliPath = path.join(getAutomationRuntimeNodeModules(), PLAYWRIGHT_PACKAGE, "cli.js");
   if (!fs.existsSync(cliPath)) {
     return {
       ok: false,
@@ -251,6 +284,7 @@ function installPlaywrightOnly({ silent = false, timeout = 600_000 } = {}) {
     stdio: silent ? ["ignore", "pipe", "pipe"] : "inherit",
     timeout,
     encoding: "utf8",
+    env: configureAutomationBrowserEnv({ ...process.env }),
   });
 
   if (res.status === 0) {

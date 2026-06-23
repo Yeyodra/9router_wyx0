@@ -24,6 +24,10 @@ function getRuntimeNodeModules() {
   return path.join(getRuntimeDir(), "node_modules");
 }
 
+function getAutomationRuntimeNodeModules() {
+  return path.join(getDataDir(), "automation-runtime", "node_modules");
+}
+
 function ensureRuntimeDir() {
   const dir = getRuntimeDir();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -139,14 +143,19 @@ function ensureSqliteRuntime({ silent = false } = {}) {
 // Inject runtime + bundled node_modules into NODE_PATH so child Node processes
 // resolve sql.js (bundled in bin/app/node_modules) and better-sqlite3 (runtime).
 function buildEnvWithRuntime(baseEnv = process.env) {
+  const automationNm = getAutomationRuntimeNodeModules();
   const runtimeNm = getRuntimeNodeModules();
   const bundledNm = path.join(__dirname, "..", "app", "node_modules");
   // Also check parent package node_modules (for npm global install where
   // cli/app/node_modules is not shipped — deps live in root node_modules)
   const parentNm = path.join(__dirname, "..", "..", "node_modules");
   const existing = baseEnv.NODE_PATH || "";
-  const NODE_PATH = [runtimeNm, bundledNm, parentNm, existing].filter(Boolean).join(path.delimiter);
-  return { ...baseEnv, NODE_PATH };
+  const NODE_PATH = [automationNm, runtimeNm, bundledNm, parentNm, existing].filter(Boolean).join(path.delimiter);
+  return {
+    ...baseEnv,
+    PLAYWRIGHT_BROWSERS_PATH: baseEnv.PLAYWRIGHT_BROWSERS_PATH || path.join(getDataDir(), "automation-runtime", "ms-playwright"),
+    NODE_PATH,
+  };
 }
 
 module.exports = {
@@ -154,6 +163,7 @@ module.exports = {
   buildEnvWithRuntime,
   getRuntimeDir,
   getRuntimeNodeModules,
+  getAutomationRuntimeNodeModules,
   runNpmInstall,
   summarizeNpmError,
 };

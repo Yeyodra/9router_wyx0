@@ -73,8 +73,8 @@ class QoderBulkImportManager extends KiroBulkImportManager {
     this.qoderServiceFactory = qoderServiceFactory;
   }
 
-  async processAccount(job, account, workerId) {
-    if (job.cancelRequested || !job.browser) {
+  async processAccount(job, account, workerId, browser = job.browser) {
+    if (job.cancelRequested || !browser) {
       this.finalizeAccount(account, "cancelled", { error: "Job cancelled" });
       return;
     }
@@ -82,8 +82,8 @@ class QoderBulkImportManager extends KiroBulkImportManager {
     const qoderService = this.qoderServiceFactory();
     const { verificationUriComplete, codeVerifier, nonce, machineId } = qoderService.initiateDeviceFlow();
 
-    const { context, page } = await createFreshContext(job.browser);
-    account.runtimeSession = { context, page };
+    const { context, page } = await createFreshContext(browser);
+    account.runtimeSession = { context, page, proxyUrl: browser.__ninerouterProxyUrl || job.proxyUrl || null };
 
     const pollPromise = this.pollForToken(qoderService, nonce, codeVerifier, job);
 

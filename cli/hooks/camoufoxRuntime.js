@@ -8,35 +8,78 @@ const { spawnSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { createRequire } = require("module");
 
-const { runNpmInstall, getRuntimeDir, getRuntimeNodeModules } = require("./sqliteRuntime");
+const { getRuntimeNodeModules, summarizeNpmError } = require("./sqliteRuntime");
+const {
+  CAMOUFOX_VERSION,
+  ensureAutomationRuntimeDir,
+  getAutomationRuntimeDir,
+  getAutomationRuntimeNodeModules,
+  installAutomationPackages,
+  requireAutomationPackage,
+  resolveAutomationPackage,
+} = require("./automationRuntime");
 
 const CAMOUFOX_PACKAGE = "camoufox-js";
-const CAMOUFOX_VERSION = "^0.11.0";
 
 let cachedReady = null;
 
+function requirePackageFromDir(packageDir, packageName) {
+  try {
+    return createRequire(path.join(packageDir, "package.json"))(packageName);
+  } catch {
+    return null;
+  }
+}
+
 function tryRequireCamoufox() {
   try {
-    return require(CAMOUFOX_PACKAGE);
+    return requireAutomationPackage(CAMOUFOX_PACKAGE);
   } catch {}
   try {
     const runtimeNm = getRuntimeNodeModules();
     const candidate = path.join(runtimeNm, CAMOUFOX_PACKAGE);
     if (fs.existsSync(path.join(candidate, "package.json"))) {
-      return require(candidate);
+      return requirePackageFromDir(candidate, CAMOUFOX_PACKAGE);
     }
   } catch {}
+  try {
+    return require(CAMOUFOX_PACKAGE);
+  } catch {}
   return null;
+}
+
+function hasAutomationCamoufoxPackage() {
+  return fs.existsSync(path.join(getAutomationRuntimeNodeModules(), CAMOUFOX_PACKAGE, "package.json"));
 }
 
 function findCamoufoxCli() {
   const candidates = [];
   try {
-    const pkgJson = require.resolve(`${CAMOUFOX_PACKAGE}/package.json`);
+    const pkgJson = resolveAutomationPackage(`${CAMOUFOX_PACKAGE}/package.json`);
+    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf8"));
+    if (typeof pkg.bin === "string") candidates.push(path.join(path.dirname(pkgJson), pkg.bin));
+    candidates.push(path.join(path.dirname(pkgJson), "dist", "__main__.js"));
     candidates.push(path.join(path.dirname(pkgJson), "dist", "cli.js"));
   } catch {}
   try {
+    const pkgJson = require.resolve(`${CAMOUFOX_PACKAGE}/package.json`);
+    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf8"));
+    if (typeof pkg.bin === "string") candidates.push(path.join(path.dirname(pkgJson), pkg.bin));
+    candidates.push(path.join(path.dirname(pkgJson), "dist", "__main__.js"));
+    candidates.push(path.join(path.dirname(pkgJson), "dist", "cli.js"));
+  } catch {}
+  try {
+    const binExt = process.platform === "win32" ? ".cmd" : "";
+    candidates.push(path.join(getAutomationRuntimeNodeModules(), ".bin", `${CAMOUFOX_PACKAGE}${binExt}`));
+    candidates.push(path.join(getAutomationRuntimeNodeModules(), CAMOUFOX_PACKAGE, "dist", "__main__.js"));
+    candidates.push(path.join(getAutomationRuntimeNodeModules(), CAMOUFOX_PACKAGE, "dist", "cli.js"));
+  } catch {}
+  try {
+    const binExt = process.platform === "win32" ? ".cmd" : "";
+    candidates.push(path.join(getRuntimeNodeModules(), ".bin", `${CAMOUFOX_PACKAGE}${binExt}`));
+    candidates.push(path.join(getRuntimeNodeModules(), CAMOUFOX_PACKAGE, "dist", "__main__.js"));
     candidates.push(path.join(getRuntimeNodeModules(), CAMOUFOX_PACKAGE, "dist", "cli.js"));
   } catch {}
   for (const candidate of candidates) {
@@ -71,21 +114,20 @@ function isCamoufoxBinaryAvailable() {
 }
 
 function ensureCamoufoxPackage({ silent = false } = {}) {
-  const mod = tryRequireCamoufox();
+  ensureAutomationRuntimeDir();
+  const mod = hasAutomationCamoufoxPackage() ? tryRequireCamoufox() : null;
   if (mod) return { ok: true, module: mod };
 
   if (!silent) console.log("⏳ Installing camoufox-js (first run, ~few MB)...");
-  const installRes = runNpmInstall({
-    cwd: getRuntimeDir(),
-    pkgs: [`${CAMOUFOX_PACKAGE}@${CAMOUFOX_VERSION}`],
-    extraArgs: ["--no-save"],
+  const installRes = installAutomationPackages([`${CAMOUFOX_PACKAGE}@${CAMOUFOX_VERSION}`], {
+    silent,
     timeout: 300_000,
   });
 
   if (!installRes.ok) {
     return {
       ok: false,
-      reason: `npm install ${CAMOUFOX_PACKAGE} failed: ${installRes.stderr.split("\n").pop().slice(0, 200)}`,
+      reason: `npm install ${CAMOUFOX_PACKAGE} failed: ${summarizeNpmError(installRes.stderr)}`,
     };
   }
 
@@ -128,7 +170,7 @@ function ensureCamoufoxRuntime({ silent = false } = {}) {
     cachedReady = false;
     const error = new Error(
       `Camoufox engine not available. ${pkg.reason}. ` +
-      `Install manually with "npm install -g camoufox-js && npx camoufox-js fetch", then retry. ` +
+      `Fix the 9router automation runtime at ${getAutomationRuntimeDir()}, then retry. ` +
       `You can also switch back to the Chromium engine in the bulk-import modal.`
     );
     error.code = "CAMOUFOX_PACKAGE_MISSING";
@@ -141,7 +183,7 @@ function ensureCamoufoxRuntime({ silent = false } = {}) {
       cachedReady = false;
       const error = new Error(
         `Camoufox browser binary not downloaded. ${fetched.reason}. ` +
-        `Run "npx camoufox-js fetch" manually, then retry. ` +
+        `Fix the 9router automation runtime at ${getAutomationRuntimeDir()}, then retry. ` +
         `You can also switch back to the Chromium engine in the bulk-import modal.`
       );
       error.code = "CAMOUFOX_BINARY_MISSING";
@@ -171,11 +213,10 @@ function summarizeInstallStderr(stderr = "") {
 }
 
 function installCamoufoxOnly({ silent = false, timeout = 600_000 } = {}) {
+  ensureAutomationRuntimeDir();
   if (!silent) console.log("⏳ Installing camoufox-js package...");
-  const installRes = runNpmInstall({
-    cwd: getRuntimeDir(),
-    pkgs: [`${CAMOUFOX_PACKAGE}@${CAMOUFOX_VERSION}`],
-    extraArgs: ["--no-save"],
+  const installRes = installAutomationPackages([`${CAMOUFOX_PACKAGE}@${CAMOUFOX_VERSION}`], {
+    silent,
     timeout: 300_000,
   });
 
@@ -184,7 +225,7 @@ function installCamoufoxOnly({ silent = false, timeout = 600_000 } = {}) {
     return { ok: false, reason };
   }
 
-  const cliPath = path.join(getRuntimeNodeModules(), CAMOUFOX_PACKAGE, "dist", "cli.js");
+  const cliPath = findCamoufoxCli();
   if (!fs.existsSync(cliPath)) {
     return {
       ok: false,

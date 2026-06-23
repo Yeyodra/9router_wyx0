@@ -5,6 +5,8 @@
 // cli.js will retry at runtime if anything is missing.
 const { ensureSqliteRuntime } = require("./sqliteRuntime");
 const { ensureTrayRuntime } = require("./trayRuntime");
+const { ensurePlaywrightRuntime } = require("./playwrightRuntime");
+const { ensureCamoufoxRuntime } = require("./camoufoxRuntime");
 
 try {
   ensureSqliteRuntime({ silent: false });
@@ -17,6 +19,30 @@ try {
   ensureTrayRuntime({ silent: false });
 } catch (e) {
   console.warn(`[9router] tray runtime skipped: ${e.message}`);
+}
+
+try {
+  const result = ensurePlaywrightRuntime({ silent: false });
+  if (!result?.ok) {
+    console.warn(`[9router] browser automation runtime skipped: ${result?.error?.message || "Playwright unavailable"}`);
+  } else {
+    console.log("[9router] browser automation Chromium ready");
+  }
+} catch (e) {
+  console.warn(`[9router] browser automation runtime skipped: ${e.message}`);
+}
+
+if (process.env.NINEROUTER_INSTALL_CAMOUFOX === "1") {
+  try {
+    const result = ensureCamoufoxRuntime({ silent: false });
+    if (!result?.ok) {
+      console.warn(`[9router] Camoufox runtime skipped: ${result?.error?.message || "Camoufox unavailable"}`);
+    } else {
+      console.log("[9router] Camoufox runtime ready");
+    }
+  } catch (e) {
+    console.warn(`[9router] Camoufox runtime skipped: ${e.message}`);
+  }
 }
 
 process.exit(0);

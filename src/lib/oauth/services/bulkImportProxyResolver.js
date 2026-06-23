@@ -4,6 +4,35 @@ import { getSettings } from "../../db/repos/settingsRepo.js";
 const RELAY_POOL_TYPES = new Set(["vercel", "cloudflare", "deno"]);
 const VALID_PROXY_PREFIXES = ["http://", "https://", "socks4://", "socks5://"];
 
+export function splitBulkImportProxyUrls(value) {
+  return String(value || "")
+    .split(/[\s,;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function validateProxyUrls(proxyUrls) {
+  for (const proxyUrl of proxyUrls) {
+    const hasValidPrefix = VALID_PROXY_PREFIXES.some((prefix) => proxyUrl.startsWith(prefix));
+    if (!hasValidPrefix) {
+      return "proxyUrl must start with http://, https://, socks4://, or socks5://";
+    }
+  }
+  return null;
+}
+
+function buildResolvedProxy(proxyUrls, source) {
+  const urls = [...new Set(proxyUrls)];
+  return {
+    proxyUrl: urls[0] || null,
+    proxyUrls: urls,
+    proxyMode: urls.length > 1 ? "round-robin" : (urls.length === 1 ? "single" : "none"),
+    proxyPoolId: source?.proxyPoolId || null,
+    proxySource: source?.proxySource || null,
+    error: null,
+  };
+}
+
 /**
  * Resolve a launchable proxy URL from bulk-import request body.
  *
@@ -12,51 +41,67 @@ const VALID_PROXY_PREFIXES = ["http://", "https://", "socks4://", "socks5://"];
  *   2. proxyUrl (freeform, basic prefix validation)
  *   3. settings.useOutboundProxyForAutomation + settings.outboundProxyUrl fallback
  *
- * Returns { proxyUrl: string|null, error: string|null }.
+ * Returns { proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, error }.
  * When error is non-null the caller should respond with 400.
  */
 export async function resolveBulkImportProxy({ proxyPoolId, proxyUrl } = {}) {
   if (proxyPoolId) {
     const pool = await getProxyPoolById(proxyPoolId);
     if (!pool) {
-      return { proxyUrl: null, error: "Proxy pool not found" };
+      return { proxyUrl: null, proxyUrls: [], proxyMode: "none", proxyPoolId, proxySource: "pool", error: "Proxy pool not found" };
     }
     if (!pool.isActive) {
-      return { proxyUrl: null, error: "Proxy pool is inactive" };
+      return { proxyUrl: null, proxyUrls: [], proxyMode: "none", proxyPoolId, proxySource: "pool", error: "Proxy pool is inactive" };
     }
     if (RELAY_POOL_TYPES.has(pool.type)) {
       return {
         proxyUrl: null,
+        proxyUrls: [],
+        proxyMode: "none",
+        proxyPoolId,
+        proxySource: "pool",
         error: `Proxy pool type "${pool.type}" is a URL-rewriting relay and cannot be used for browser launch`,
       };
     }
-    return { proxyUrl: pool.proxyUrl || null, error: null };
+    const proxyUrls = splitBulkImportProxyUrls(pool.proxyUrl);
+    const validationError = validateProxyUrls(proxyUrls);
+    if (validationError) {
+      return { proxyUrl: null, proxyUrls: [], proxyMode: "none", proxyPoolId, proxySource: "pool", error: validationError };
+    }
+    return buildResolvedProxy(proxyUrls, { proxyPoolId, proxySource: "pool" });
   }
 
   if (proxyUrl) {
-    const trimmed = String(proxyUrl).trim();
-    if (!trimmed) {
-      return { proxyUrl: null, error: null };
-    }
-    const hasValidPrefix = VALID_PROXY_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
-    if (!hasValidPrefix) {
+    const proxyUrls = splitBulkImportProxyUrls(proxyUrl);
+    if (!proxyUrls.length) return buildResolvedProxy([], { proxySource: "custom" });
+    const validationError = validateProxyUrls(proxyUrls);
+    if (validationError) {
       return {
         proxyUrl: null,
-        error: "proxyUrl must start with http://, https://, socks4://, or socks5://",
+        proxyUrls: [],
+        proxyMode: "none",
+        proxyPoolId: null,
+        proxySource: "custom",
+        error: validationError,
       };
     }
-    return { proxyUrl: trimmed, error: null };
+    return buildResolvedProxy(proxyUrls, { proxySource: "custom" });
   }
 
   // Fallback: check settings for outbound proxy automation opt-in
   try {
     const settings = await getSettings();
     if (settings.useOutboundProxyForAutomation === true && settings.outboundProxyUrl) {
-      return { proxyUrl: settings.outboundProxyUrl, error: null };
+      const proxyUrls = splitBulkImportProxyUrls(settings.outboundProxyUrl);
+      const validationError = validateProxyUrls(proxyUrls);
+      if (validationError) {
+        return { proxyUrl: null, proxyUrls: [], proxyMode: "none", proxyPoolId: null, proxySource: "settings", error: validationError };
+      }
+      return buildResolvedProxy(proxyUrls, { proxySource: "settings" });
     }
   } catch {
     // Settings unavailable; proceed without proxy
   }
 
-  return { proxyUrl: null, error: null };
+  return buildResolvedProxy([], { proxySource: null });
 }
