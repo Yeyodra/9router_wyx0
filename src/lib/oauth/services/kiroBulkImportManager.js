@@ -32,6 +32,9 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 function ensurePersistenceDir(dir = KIRO_BULK_IMPORT_DIR) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -904,6 +907,11 @@ export class KiroBulkImportManager {
         const account = this.dequeueAccount(job, workerId);
         if (!account) return;
         await this.processAccount(job, account, workerId, workerBrowser);
+        // Cooldown between accounts to reduce CAPTCHA/rate-limit triggers
+        if (!job.cancelRequested) {
+          const nextAccount = job.accounts[job.nextIndex];
+          if (nextAccount) await sleep(30_000);
+        }
       }
     } finally {
       if (ownsBrowser && workerBrowser && job.cancelRequested) {
@@ -918,7 +926,12 @@ export class KiroBulkImportManager {
     if (!job) return;
 
     try {
-      const useWorkerBrowsers = Array.isArray(job.proxyUrls) && job.proxyUrls.length > 1;
+      // Camoufox shares browser-level state (cookies, fingerprint) across
+      // contexts, so multiple workers in one Firefox instance will trigger
+      // Google's session-overlap detection. Always use per-worker browsers for
+      // Camoufox, same as the multi-proxy path.
+      const useWorkerBrowsers = (Array.isArray(job.proxyUrls) && job.proxyUrls.length > 1)
+        || job.engine === "camoufox";
       if (!useWorkerBrowsers) {
         job.browser = await this.browserLauncher(job);
         job.browser.__ninerouterProxyUrl = job.proxyUrl || null;
@@ -930,11 +943,15 @@ export class KiroBulkImportManager {
       });
       await this.persistJobSnapshot(job, { forcePreview: false });
       const workerCount = Math.min(job.concurrency, Math.max(job.accounts.length, 1));
-      const workers = Array.from({ length: workerCount }, (_, index) => this.runWorker(
-        job,
-        index + 1,
-        useWorkerBrowsers ? null : job.browser
-      ));
+      // Stagger worker starts to avoid all workers hitting Google OAuth simultaneously.
+      // Each worker waits (index * WORKER_STAGGER_MS) before launching, spreading
+      // the login requests over time and reducing unusual-traffic detection.
+      const WORKER_STAGGER_MS = 60_000;
+      const workers = Array.from({ length: workerCount }, (_, index) => (async () => {
+        if (index > 0) await sleep(index * WORKER_STAGGER_MS);
+        if (job.cancelRequested) return;
+        return this.runWorker(job, index + 1, useWorkerBrowsers ? null : job.browser);
+      })());
 
       await Promise.allSettled(workers);
 
