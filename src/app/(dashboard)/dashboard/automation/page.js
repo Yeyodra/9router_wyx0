@@ -12,6 +12,7 @@ import {
   OAuthModal,
 } from "@/shared/components";
 import QwenCloudAutomationModal from "@/shared/components/QwenCloudAutomationModal";
+import QwenCloudRegisterModal from "@/shared/components/QwenCloudRegisterModal";
 import { FREE_PROVIDERS } from "@/shared/constants/providers";
 
 function getConnectionLabel(count) {
@@ -325,6 +326,7 @@ function CodeBuddyCnAutomationPanel({ onRefresh }) {
 
 function QwenCloudAutomationPanel({ onRefresh }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
 
   return (
     <>
@@ -342,11 +344,29 @@ function QwenCloudAutomationPanel({ onRefresh }) {
             Run bulk Gmail|password automation via Google OAuth → Qwen Cloud API key. Dot trick multiplies Gmail accounts automatically.
           </span>
         </button>
+        <button
+          type="button"
+          onClick={() => setIsRegisterOpen(true)}
+          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
+            <span className="material-symbols-outlined text-[20px] text-primary">person_add</span>
+            Register New Accounts
+          </span>
+          <span className="text-xs leading-relaxed text-text-muted">
+            Auto-register brand-new Alibaba Cloud accounts using random emails on your domain, verify via IMAP OTP, and extract API keys.
+          </span>
+        </button>
       </div>
       <QwenCloudAutomationModal
         isOpen={isOpen}
         onSuccess={onRefresh}
         onClose={() => setIsOpen(false)}
+      />
+      <QwenCloudRegisterModal
+        isOpen={isRegisterOpen}
+        onSuccess={onRefresh}
+        onClose={() => setIsRegisterOpen(false)}
       />
     </>
   );
