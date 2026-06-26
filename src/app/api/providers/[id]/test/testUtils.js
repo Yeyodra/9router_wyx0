@@ -700,6 +700,23 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
+      case "qwen-cloud": {
+        // Hit /models — cheap, no token consumption (mirrors qwenKeyStatus.mjs)
+        const res = await fetchWithConnectionProxy("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models", {
+          headers: {
+            Authorization: `Bearer ${connection.apiKey}`,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+        }, effectiveProxy);
+        if (res.ok) return { valid: true, error: null };
+        if (res.status === 401 || res.status === 403) return { valid: false, error: "Invalid API key" };
+        // DashScope returns 200 even for quota errors — check body
+        const body = await res.json().catch(() => null);
+        const code = body?.code || body?.error?.code || "";
+        const invalidCodes = new Set(["InvalidApiKey", "Unauthorized", "AuthenticationError", "AccessDenied.InvalidApiKey"]);
+        if (invalidCodes.has(code)) return { valid: false, error: "Invalid API key" };
+        return { valid: true, error: null };
+      }
       default:
         return { valid: false, error: "Provider test not supported" };
     }

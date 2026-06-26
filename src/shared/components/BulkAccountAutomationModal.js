@@ -17,6 +17,19 @@ const DEFAULT_CONCURRENCY = 4;
 const ACTIVE_JOB_STATUSES = new Set(["queued", "running", "needs_manual"]);
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const DEFAULT_ENGINE = "chromium";
+
+/** Extract email from a bulk account line (email:pass, email|pass, email\tpass). */
+function extractEmailFromLine(line) {
+  const raw = String(line || "").trim();
+  if (!raw || raw.startsWith("#")) return null;
+  if (raw.includes("|")) return raw.split("|")[0].trim().toLowerCase();
+  if (raw.includes("\t")) return raw.substring(0, raw.indexOf("\t")).trim().toLowerCase();
+  if (raw.includes(":")) {
+    const before = raw.substring(0, raw.indexOf(":")).trim();
+    if (before.includes("@")) return before.toLowerCase();
+  }
+  return null;
+}
 const ENGINE_OPTIONS = [
   { value: "chromium", label: "Chromium (default, fast)" },
   { value: "camoufox", label: "Camoufox (stealth Firefox, slower)" },
@@ -94,6 +107,8 @@ export default function BulkAccountAutomationModal({
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [jobRestoreNotice, setJobRestoreNotice] = useState(null);
+  const [poolEmails, setPoolEmails] = useState(new Set());
+  const [skippedCount, setSkippedCount] = useState(0);
 
   const runningJob = activeJob && ACTIVE_JOB_STATUSES.has(activeJob.status);
   const finishedJob = activeJob && TERMINAL_JOB_STATUSES.has(activeJob.status);
@@ -112,6 +127,8 @@ export default function BulkAccountAutomationModal({
     [...(activeJob?.activity || [])].reverse()
   ), [activeJob]);
 
+
+
   const resetState = useCallback(() => {
     setBulkText("");
     setConcurrency(String(DEFAULT_CONCURRENCY));
@@ -122,6 +139,7 @@ export default function BulkAccountAutomationModal({
     setError(null);
     setImporting(false);
     setJobRestoreNotice(null);
+    setSkippedCount(0);
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(storageKey);
     }
@@ -252,13 +270,54 @@ export default function BulkAccountAutomationModal({
       return;
     }
 
+    // Skip accounts already in the pool for this provider
+    let currentPoolEmails = poolEmails;
+    try {
+      const poolRes = await fetch("/api/providers", { cache: "no-store" });
+      if (poolRes.ok) {
+        const poolData = await poolRes.json();
+        const conns = Array.isArray(poolData)
+          ? poolData
+          : (Array.isArray(poolData?.connections) ? poolData.connections : []);
+        const providerConns = conns.filter((c) => c.provider === provider);
+        currentPoolEmails = new Set(
+          providerConns
+            .filter((c) => c.email)
+            .map((c) => c.email.toLowerCase())
+        );
+        setPoolEmails(currentPoolEmails);
+        console.log(`[BulkDedup] provider=${provider} total_conns=${conns.length} provider_conns=${providerConns.length} emails_in_pool=${currentPoolEmails.size}`, [...currentPoolEmails]);
+      }
+    } catch (e) {
+      console.warn("[BulkDedup] failed to fetch pool:", e);
+    }
+
+    const newLines = [];
+    let skipped = 0;
+    for (const line of lines) {
+      const email = extractEmailFromLine(line);
+      if (email && currentPoolEmails.has(email)) {
+        skipped++;
+        console.log(`[BulkDedup] skip: ${email}`);
+      } else {
+        newLines.push(line);
+      }
+    }
+    setSkippedCount(skipped);
+    console.log(`[BulkDedup] total=${lines.length} skipped=${skipped} sending=${newLines.length}`);
+
+    if (!newLines.length) {
+      setError("All accounts already exist in the pool for this provider — nothing to import.");
+      return;
+    }
+
     setImporting(true);
     setError(null);
     setJobRestoreNotice(null);
 
     try {
       const postBody = {
-        accounts: lines,
+        accounts: newLines,
         concurrency: autoConcurrency
           ? "auto"
           : Number.parseInt(concurrency, 10) || DEFAULT_CONCURRENCY,
@@ -359,6 +418,11 @@ export default function BulkAccountAutomationModal({
               <p className="mt-1 text-xs text-text-muted">
                 One account per line. Supported formats: email:password, email|password, or tab-separated.
               </p>
+              {skippedCount > 0 && (
+                <p className="mt-1 text-xs text-yellow-600 dark:text-yellow-400">
+                  {skippedCount} account{skippedCount !== 1 ? "s" : ""} skipped — already in pool for this provider.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

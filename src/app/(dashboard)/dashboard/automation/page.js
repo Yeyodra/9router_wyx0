@@ -11,6 +11,7 @@ import {
   KiroOAuthWrapper,
   OAuthModal,
 } from "@/shared/components";
+import QwenCloudAutomationModal from "@/shared/components/QwenCloudAutomationModal";
 import { FREE_PROVIDERS } from "@/shared/constants/providers";
 
 function getConnectionLabel(count) {
@@ -322,6 +323,35 @@ function CodeBuddyCnAutomationPanel({ onRefresh }) {
   );
 }
 
+function QwenCloudAutomationPanel({ onRefresh }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
+            <span className="material-symbols-outlined text-[20px] text-primary">group_add</span>
+            Auto Login Bulk + Dot Trick
+          </span>
+          <span className="text-xs leading-relaxed text-text-muted">
+            Run bulk Gmail|password automation via Google OAuth → Qwen Cloud API key. Dot trick multiplies Gmail accounts automatically.
+          </span>
+        </button>
+      </div>
+      <QwenCloudAutomationModal
+        isOpen={isOpen}
+        onSuccess={onRefresh}
+        onClose={() => setIsOpen(false)}
+      />
+    </>
+  );
+}
+
 function QoderAutomationPanel({ providerInfo, onRefresh }) {
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [isOAuthOpen, setIsOAuthOpen] = useState(false);
@@ -410,6 +440,14 @@ const AUTOMATION_PROVIDERS = [
     description: "Bulk GSuite auto login via Google SSO and device flow.",
     supportedModes: ["bulk-account", "device-oauth"],
     component: QoderAutomationPanel,
+  },
+  {
+    id: "qwen-cloud",
+    label: "Qwen Cloud",
+    icon: "cloud",
+    description: "Bulk GSuite automation via Alibaba SSO → Qwen Cloud API key.",
+    supportedModes: ["bulk-account"],
+    component: QwenCloudAutomationPanel,
   },
 ];
 
