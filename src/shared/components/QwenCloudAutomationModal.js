@@ -23,7 +23,7 @@ const ENGINE_OPTIONS = [
 ];
 
 // --- Dot trick logic ---
-const MAX_VARIANTS = 500;
+const MAX_VARIANTS = 5000;
 
 function generateDotTrickVariants(email) {
   const lower = String(email || "").toLowerCase().trim();
