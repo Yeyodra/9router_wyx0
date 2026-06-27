@@ -264,12 +264,13 @@ async function extractSecToken(cookieHeader) {
 }
 
 // ─── callApiGateway (copied from qwenCloudBulkImportManager.js) ───────────────
-async function callApiGateway(cookieHeader, secToken, apiName, reqDTO) {
+async function callApiGateway(cookieHeader, secToken, apiName, reqDTO, extraData = {}) {
   const paramsPayload = {
     Api: apiName,
     Data: {
       reqDTO,
       cornerstoneParam: QWEN_CORNERSTONE,
+      ...extraData,
     },
   };
   const body = new URLSearchParams({
@@ -346,6 +347,14 @@ async function getImapConfig() {
 // ─── runQwenCloudRegistration — full registration flow ───────────────────────
 async function runQwenCloudRegistration(page, email, password, imapConfig, { onStep } = {}) {
   page.setDefaultTimeout(120_000);
+
+  // Debug logger — writes to file (survives stdout suppression)
+  const _dbg = (msg) => {
+    const line = `[${new Date().toISOString()}] ${msg}\n`;
+    try { require("fs").appendFileSync(require("path").join(process.cwd(), "debug-register.log"), line); } catch {}
+    console.log(`[QwenRegister] ${msg}`);
+  };
+  _dbg(`runQwenCloudRegistration STARTED for ${email}`);
 
   // pollUrl helper — wait for URL predicate to be true (reused from GSuite flow)
   const pollUrl = async (predicate, { timeout = 45_000, interval = 600 } = {}) => {
@@ -748,22 +757,137 @@ async function runQwenCloudRegistration(page, email, password, imapConfig, { onS
     throw Object.assign(new Error("Failed to extract sec_token"), { step: "sec_token_failed" });
   }
 
+  // 14b. Activate Bailian model service — without these API calls the workspace
+  //      gets an API key but ZERO model entitlement, causing 403
+  //      "Access to model denied" (AccessDenied.Unpurchased) on every model.
+  //      Sequence captured from HAR (clean.har): home.qwencloud.com dashboard JS
+  //      calls these on page load. We replicate them explicitly via the gateway.
+  //      Flow: loginInfo → initSpace → queryBuyPostpaidResult → buyPostpaidCommodity
+  //      → poll queryBuyPostpaidResult until "success" → then createApiKey.
+
+  // (a) loginInfo — session init (first gateway call in HAR)
+  onStep?.("activating_service", "Session init (loginInfo)");
+  _dbg("Calling loginInfo...");
+  {
+    const r = await callApiGateway(
+      cookieHeader, secToken,
+      "zeldaEasy.cornerstone-portal.cs-console.loginInfo",
+      {},
+    ).catch(e => { _dbg(`loginInfo ERROR: ${e.message}`); return null; });
+    _dbg(`loginInfo result: success=${r?.data?.success} errMsg=${r?.data?.errorMsg || ""} raw=${JSON.stringify(r).slice(0, 200)}`);
+  }
+  await sleep(1_000);
+
+  // (b) initSpace — initialize Bailian workspace
+  onStep?.("activating_service", "Initializing workspace (initSpace)");
+  _dbg("Calling initSpace...");
+  {
+    const r = await callApiGateway(
+      cookieHeader, secToken,
+      "zeldaEasy.bailian-dash-workspace.space.initSpace",
+      {},
+    ).catch(e => { _dbg(`initSpace ERROR: ${e.message}`); return null; });
+    _dbg(`initSpace result: success=${r?.data?.success} errMsg=${r?.data?.errorMsg || ""} raw=${JSON.stringify(r).slice(0, 200)}`);
+  }
+  await sleep(2_000);
+
+  // (c) buyPostpaidCommodity — subscribe to free-tier model service (1M tokens)
+  //     MUST use page.evaluate (browser fetch) — Node.js fetch triggers
+  //     RISK.RISK_CONTROL_REJECTION because TLS fingerprint differs from browser.
+  onStep?.("subscribing_service", "Subscribing to free-tier (buyPostpaidCommodity via browser)");
+  _dbg("Calling buyPostpaidCommodity via page.evaluate (browser fetch)...");
+  {
+    const buyResult = await page.evaluate(async (token) => {
+      const params = JSON.stringify({
+        Api: "zeldaEasy.bailian-commerce.bill.buyPostpaidCommodity",
+        Data: {
+          reqDTO: {},
+          cornerstoneParam: {
+            domain: "home.qwencloud.com",
+            consoleSite: "QWENCLOUD",
+            productCode: "p_efm",
+            protocol: "V2",
+            xsp_lang: "en-US",
+          },
+          advertTrace: { channel: "", fromApp: "qwencloud" },
+        },
+      });
+      const body = new URLSearchParams({
+        product: "sfm_bailian",
+        action: "IntlBroadScopeAspnGateway",
+        sec_token: token,
+        region: "ap-southeast-1",
+        params,
+      }).toString();
+      const url = "https://cs-data.qwencloud.com/data/api.json?product=sfm_bailian&action=IntlBroadScopeAspnGateway&api=" + encodeURIComponent("zeldaEasy.bailian-commerce.bill.buyPostpaidCommodity");
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        credentials: "include",
+      });
+      return res.text();
+    }, secToken).catch(e => { _dbg(`buyPostpaid page.evaluate ERROR: ${e.message}`); return null; });
+    _dbg(`buyPostpaid (browser) result: ${String(buyResult).slice(0, 300)}`);
+  }
+
+  // (d) Wait briefly then proceed — HAR shows manual flow calls createApiKey while
+  //     polling is still returning "buying". Some commodities (sfm_training etc.)
+  //     always return "fail" via RISK_CONTROL_REJECTION — this is normal and does
+  //     NOT block inference models. Waiting for a non-"buying" status is wrong;
+  //     just give the backend a few seconds to provision the workspace.
+  onStep?.("waiting_subscription", "Waiting for subscription to provision (5s)");
+  await sleep(5_000);
+  _dbg("Subscription wait complete — proceeding to createApiKey");
+
   // 15. Create API key (retry 3x for NotAuthorised)
   onStep?.("creating_api_key", "Creating Qwen Cloud API key");
   let createResp;
   const CREATE_RETRIES = 3;
   const CREATE_RETRY_DELAY = 8_000;
   for (let attempt = 1; attempt <= CREATE_RETRIES; attempt++) {
-    createResp = await callApiGateway(
-      cookieHeader,
-      secToken,
-      QWEN_API_NAME,
-      { description: `poolprox-${Date.now()}` }
-    );
+    _dbg(`createApiKey attempt ${attempt}/${CREATE_RETRIES} (browser fetch)...`);
+    const rawCreate = await page.evaluate(async ({ token, apiName, cornerstone, desc }) => {
+      const params = JSON.stringify({
+        Api: apiName,
+        Data: {
+          reqDTO: { description: desc },
+          cornerstoneParam: cornerstone,
+        },
+      });
+      const body = new URLSearchParams({
+        product: "sfm_bailian",
+        action: "IntlBroadScopeAspnGateway",
+        sec_token: token,
+        region: "ap-southeast-1",
+        params,
+      }).toString();
+      const url = "https://cs-data.qwencloud.com/data/api.json?product=sfm_bailian&action=IntlBroadScopeAspnGateway&api=" + encodeURIComponent(apiName);
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+          credentials: "include",
+        });
+        return res.text();
+      } catch (e) {
+        return null;
+      }
+    }, {
+      token: secToken,
+      apiName: QWEN_API_NAME,
+      cornerstone: QWEN_CORNERSTONE,
+      desc: `poolprox-${Date.now()}`,
+    }).catch(() => null);
+
+    try { createResp = rawCreate ? JSON.parse(rawCreate) : null; } catch { createResp = { _rawText: String(rawCreate).slice(0, 500) }; }
+    _dbg(`createApiKey attempt ${attempt} raw: ${JSON.stringify(createResp).slice(0, 400)}`);
     const errMsg = createResp?.data?.errorMsg || createResp?.data?.DataV2?.errorMsg || "";
     if (errMsg.includes("NotAuthorised") || errMsg.includes("NotAuthorized")) {
       if (attempt < CREATE_RETRIES) {
         onStep?.("creating_api_key", `Workspace not ready (attempt ${attempt}/${CREATE_RETRIES}) — retrying in ${CREATE_RETRY_DELAY / 1000}s`);
+        _dbg(`createApiKey NotAuthorised — retrying in ${CREATE_RETRY_DELAY}ms`);
         await sleep(CREATE_RETRY_DELAY);
         continue;
       }
@@ -785,6 +909,53 @@ async function runQwenCloudRegistration(page, email, password, imapConfig, { onS
     throw Object.assign(
       new Error(`createApiKey returned no key: ${errMsg}`),
       { step: "key_creation_failed" }
+    );
+  }
+
+  // 16. Verify API key — hit Dashscope with a minimal completion request.
+  //     A valid key returns choices[0]; an unprovisioned / denied key returns
+  //     an error object. We treat anything other than a model response as a
+  //     failure so the account is not saved as "active" when it cannot
+  //     actually serve requests.
+  onStep?.("verifying_api_key", "Verifying API key with a test model call");
+  try {
+    const verifyBody = JSON.stringify({
+      model: "qwen3-14b",
+      messages: [{ role: "user", content: "Hello" }],
+      stream: false,
+      max_tokens: 10,
+      enable_thinking: false,
+    });
+    const verifyRes = await fetch(
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: verifyBody,
+        signal: AbortSignal.timeout(30_000),
+      }
+    );
+    const verifyData = await verifyRes.json().catch(() => null);
+    const hasResponse = verifyData?.choices?.[0]?.message?.content != null;
+    if (!hasResponse) {
+      const verifyErr =
+        verifyData?.error?.message ||
+        verifyData?.error?.code ||
+        JSON.stringify(verifyData).slice(0, 200);
+      throw Object.assign(
+        new Error(`API key verification failed: ${verifyErr}`),
+        { step: "key_verification_failed" }
+      );
+    }
+    onStep?.("key_verified", "API key verified — model responded successfully");
+  } catch (err) {
+    if (err.step === "key_verification_failed") throw err;
+    throw Object.assign(
+      new Error(`API key verification error: ${err.message}`),
+      { step: "key_verification_failed" }
     );
   }
 
