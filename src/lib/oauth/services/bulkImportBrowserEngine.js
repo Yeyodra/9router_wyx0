@@ -222,7 +222,7 @@ async function launchCamoufox({ proxyUrl, headless = true, args = [] } = {}) {
 
   const firefox = await loadFirefoxForCamoufox();
 
-  const camoufoxOptions = await camoufox.launchOptions({ headless });
+  const camoufoxOptions = await camoufox.launchOptions({ headless, geoip: true, humanize: true });
   const launchOptions = { ...camoufoxOptions };
   if (args.length) launchOptions.args = [...(launchOptions.args || []), ...args];
   const proxy = buildBrowserProxyOption(proxyUrl);
