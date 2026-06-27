@@ -729,6 +729,53 @@ async function runQwenCloudAccountAutomation(page, email, password, { onStep } =
     );
   }
 
+  // 8. Verify API key — hit Dashscope with a minimal completion request.
+  //    A valid key returns choices[0]; an unprovisioned / denied key returns
+  //    an error object.  We treat anything other than a model response as
+  //    a failure so the account is not saved as "active" when it cannot
+  //    actually serve requests.
+  onStep?.("verifying_api_key", "Verifying API key with a test model call");
+  try {
+    const verifyBody = JSON.stringify({
+      model: "qwen3-14b",
+      messages: [{ role: "user", content: "Hello" }],
+      stream: false,
+      max_tokens: 10,
+      enable_thinking: false,
+    });
+    const verifyRes = await fetch(
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: verifyBody,
+        signal: AbortSignal.timeout(30_000),
+      }
+    );
+    const verifyData = await verifyRes.json().catch(() => null);
+    const hasResponse = verifyData?.choices?.[0]?.message?.content != null;
+    if (!hasResponse) {
+      const verifyErr =
+        verifyData?.error?.message ||
+        verifyData?.error?.code ||
+        JSON.stringify(verifyData).slice(0, 200);
+      throw Object.assign(
+        new Error(`API key verification failed: ${verifyErr}`),
+        { step: "key_verification_failed" }
+      );
+    }
+    onStep?.("key_verified", "API key verified — model responded successfully");
+  } catch (err) {
+    if (err.step === "key_verification_failed") throw err;
+    throw Object.assign(
+      new Error(`API key verification error: ${err.message}`),
+      { step: "key_verification_failed" }
+    );
+  }
+
   return { apiKey, keyId, workspaceId, gmtExpire, description };
 }
 

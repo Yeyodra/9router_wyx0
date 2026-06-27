@@ -27,7 +27,8 @@ const CODEBUDDY_KEYS_URL = "https://www.codebuddy.ai/profile/keys";
 const CODEBUDDY_API_KEY_ENDPOINT = "https://www.codebuddy.ai/console/api/client/v1/api-keys";
 const CODEBUDDY_REGION_ACCOUNT_ENDPOINT = "https://www.codebuddy.ai/console/login/account";
 const CODEBUDDY_TRIAL_ENDPOINT = "https://www.codebuddy.ai/billing/ide/trial";
-const CODEBUDDY_DEFAULT_KEY_EXPIRE_DAYS = 365;
+const CODEBUDDY_USER_REGISTER_ENDPOINT = "https://www.codebuddy.ai/auth/realms/copilot/overseas/user/register";
+const CODEBUDDY_DEFAULT_KEY_EXPIRE_DAYS = -1;
 const CODEBUDDY_KEY_SESSION_TIMEOUT_MS = 45_000;
 const CODEBUDDY_KEY_SESSION_POLL_MS = 1_500;
 const CODEBUDDY_PERSONAL_ENTERPRISE_ID = "personal-edition-user-id";
@@ -318,6 +319,57 @@ async function submitCodeBuddyRegionProfile(page, onStep) {
     ok: false,
     code: result.payload?.code ?? result.status,
     message: result.payload?.msg || result.payload?.message || result.text || `HTTP ${result.status}`,
+  };
+}
+
+/**
+ * Register the CodeBuddy overseas user profile after region selection.
+ * Ported from etteum-pool (scripts/auth/app/providers/codebuddy.py:2012-2023).
+ * Best-effort: failures are recorded but never abort the flow.
+ */
+async function registerCodeBuddyOverseasUser(page, onStep) {
+  onStep?.("registering_codebuddy_user", "Fetching console accounts and registering CodeBuddy overseas user profile");
+
+  const accountsResult = await page.evaluate(async () => {
+    try {
+      const response = await fetch("/console/accounts", {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          "x-requested-with": "XMLHttpRequest",
+          "X-Domain": window.location.hostname || "www.codebuddy.ai",
+        },
+      });
+      const text = await response.text();
+      let payload = null;
+      try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
+      return { ok: response.ok, status: response.status, payload };
+    } catch (error) {
+      return { ok: false, status: 0, error: error?.message || String(error) };
+    }
+  });
+
+  const accounts = accountsResult?.payload?.data?.accounts || [];
+  const uid = accounts[0]?.uid || "";
+  if (!uid) {
+    return { ok: false, message: "No uid found in console accounts" };
+  }
+
+  const registerUrl = `${CODEBUDDY_USER_REGISTER_ENDPOINT}?userId=${encodeURIComponent(uid)}`;
+  const registerResult = await postJsonFromPage(page, registerUrl, {
+    method: "GET",
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "x-requested-with": "XMLHttpRequest",
+      "x-domain": "www.codebuddy.ai",
+    },
+  });
+
+  return {
+    ok: registerResult.ok,
+    code: registerResult.payload?.code ?? null,
+    message: registerResult.payload?.msg || registerResult.text || `HTTP ${registerResult.status}`,
   };
 }
 
@@ -663,6 +715,19 @@ async function finalizeCodeBuddySuccess({ manager, job, account, context, page, 
       },
     };
 
+    const registerResult = await registerCodeBuddyOverseasUser(page, (step, message) => {
+      manager.setAccountStep(account, step, message);
+      void manager.persistJobSnapshot(job, { forcePreview: false });
+    });
+    effectiveTokens = {
+      ...effectiveTokens,
+      providerSpecificData: {
+        ...(effectiveTokens.providerSpecificData || {}),
+        codebuddyUserRegisterOk: registerResult.ok,
+        codebuddyUserRegisterMessage: registerResult.message || null,
+      },
+    };
+
     const trialResult = await ensureCodeBuddyTrialActivated(page, (step, message) => {
       manager.setAccountStep(account, step, message);
       void manager.persistJobSnapshot(job, { forcePreview: false });
@@ -773,7 +838,7 @@ async function finalizeRestrictedCodeBuddySession({
     email: account.email,
     createOptions: {
       directReplay: true,
-      userEnterpriseId: CODEBUDDY_PERSONAL_ENTERPRISE_ID,
+      userEnterpriseId: replayTokens?.providerSpecificData?.enterpriseId || CODEBUDDY_PERSONAL_ENTERPRISE_ID,
     },
   });
 }
