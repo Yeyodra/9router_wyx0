@@ -98,6 +98,13 @@ export const PROVIDER_CAPABILITIES = {
   // supportsImages). Every model reasons via OpenAI-style reasoning_effort
   // (see registry thinkingFormat). `onlyReasoning` models can't turn thinking
   // off → thinkingCanDisable:false (clamped to minimal instead of disabled).
+  // Kiro — `auto` routes server-side to capable models (Claude, etc.) that
+  // support vision. Mark vision:true so modality.js does NOT strip image
+  // blocks before they reach the Kiro translator.
+  "kiro": {
+    "auto": { vision: true, tools: true, contextWindow: 200000, maxOutput: 64000 },
+  },
+
   "codebuddy-cn": {
     "glm-5.2":            { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 48000 },
     "glm-5.1":            { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 48000 },
