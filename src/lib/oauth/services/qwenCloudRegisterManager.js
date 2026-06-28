@@ -36,6 +36,7 @@ const QWEN_API_NAME = "zeldaEasy.bailian-dash-workspace.api-key.createApiKey4Age
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SLIDER_CONTAINER_SEL = [
+  "#risk_slider_container",
   ".nc-container",
   ".nc_wrapper",
   '[id*="nc_1"]',
@@ -77,12 +78,12 @@ function bezierDragPoints(totalX, steps = 40) {
   return points;
 }
 
-async function solveSliderCaptcha(page) {
+async function solveSliderCaptcha(locatorCtx, mouseCtx) {
   try {
-    const container = page.locator(SLIDER_CONTAINER_SEL).first();
+    const container = locatorCtx.locator(SLIDER_CONTAINER_SEL).first();
     const containerVisible = await container.isVisible({ timeout: 2_000 }).catch(() => false);
     if (!containerVisible) return false;
-    const sliderBtn = page.locator(SLIDER_BTN_SEL).first();
+    const sliderBtn = locatorCtx.locator(SLIDER_BTN_SEL).first();
     const sliderVisible = await sliderBtn.isVisible({ timeout: 2_000 }).catch(() => false);
     if (!sliderVisible) return false;
     const btnBox = await sliderBtn.boundingBox().catch(() => null);
@@ -93,16 +94,16 @@ async function solveSliderCaptcha(page) {
     const startX = btnBox.x + btnBox.width / 2;
     const startY = btnBox.y + btnBox.height / 2;
     const points = bezierDragPoints(dragDistance, 45 + Math.floor(Math.random() * 15));
-    await page.mouse.move(startX, startY);
+    await mouseCtx.mouse.move(startX, startY);
     await sleep(80 + Math.random() * 120);
-    await page.mouse.down();
+    await mouseCtx.mouse.down();
     await sleep(50 + Math.random() * 80);
     for (const pt of points) {
-      await page.mouse.move(startX + pt.x, startY + pt.y, { steps: 1 });
+      await mouseCtx.mouse.move(startX + pt.x, startY + pt.y, { steps: 1 });
       await sleep(8 + Math.random() * 18);
     }
     await sleep(120 + Math.random() * 200);
-    await page.mouse.up();
+    await mouseCtx.mouse.up();
     await sleep(800 + Math.random() * 400);
     return true;
   } catch {
@@ -110,13 +111,13 @@ async function solveSliderCaptcha(page) {
   }
 }
 
-async function handleSliderCaptchaIfPresent(page, { onStep, maxRetries = 3 } = {}) {
+async function handleSliderCaptchaIfPresent(page, { onStep, maxRetries = 3, mouseCtx } = {}) {
   const container = page.locator(SLIDER_CONTAINER_SEL).first();
   const visible = await container.isVisible({ timeout: 1_500 }).catch(() => false);
   if (!visible) return false;
   onStep?.("solving_captcha", "Detected Alibaba slide CAPTCHA — attempting to solve");
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const moved = await solveSliderCaptcha(page);
+    const moved = await solveSliderCaptcha(page, mouseCtx ?? page);
     if (!moved) break;
     await sleep(1_500);
     const stillVisible = await container.isVisible({ timeout: 1_000 }).catch(() => false);
@@ -347,448 +348,590 @@ async function getImapConfig() {
 async function runQwenCloudRegistration(page, email, password, imapConfig, { onStep } = {}) {
   page.setDefaultTimeout(120_000);
 
-  // pollUrl helper — wait for URL predicate to be true (reused from GSuite flow)
-  const pollUrl = async (predicate, { timeout = 45_000, interval = 600 } = {}) => {
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      if (predicate(page.url())) return page.url();
-      await sleep(interval);
+  // Find passport.alibabacloud.com iframe frame
+  async function findRegisterFrame(pg) {
+    for (const f of pg.frames()) {
+      if (f.url().includes("passport.alibabacloud.com")) return f;
     }
     return null;
-  };
+  }
 
-  // 1. Navigate to home.qwencloud.com/api-keys → triggers SSO redirect to login.htm
-  //    (same entry point as GSuite Auto Login — only the register flow differs)
-  onStep?.("navigating", "Navigating to home.qwencloud.com/api-keys (SSO redirect)");
-  await page.goto(QWEN_HOME_URL, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => null);
-  await sleep(2_000);
-
-  // 2. Wait for SSO login page (account.alibabacloud.com/sso/login.htm)
-  onStep?.("waiting_sso_page", "Waiting for SSO login page to load");
-  const ssoLanded = await pollUrl(
-    (u) => u.includes("account.alibabacloud.com/sso/login.htm") || u.includes("account.alibabacloud.com/sso/"),
-    { timeout: 30_000 }
+  // ── Step 1: Navigate ────────────────────────────────────────────────────────
+  onStep?.("navigating", "Navigating to Alibaba Cloud register page");
+  await page.goto(
+    "https://account.alibabacloud.com/register/intl_register.htm",
+    { waitUntil: "domcontentloaded", timeout: 120_000 }
   );
-  if (!ssoLanded) {
+
+  // ── Step 2: Wait for passport iframe ────────────────────────────────────────
+  onStep?.("waiting_iframe", "Waiting for passport iframe to load");
+  let frame = null;
+  for (let wait = 0; wait < 15; wait++) {
+    try {
+      await page.waitForSelector("iframe[src*='passport']", { timeout: 5_000 });
+    } catch { /* keep trying */ }
+    await sleep(2_000);
+    frame = await findRegisterFrame(page);
+    if (frame) break;
+  }
+  if (!frame) {
     throw Object.assign(
-      new Error(`Never reached SSO login page — stuck at: ${page.url().slice(0, 100)}`),
-      { step: "sso_page_not_reached" }
+      new Error("passport.alibabacloud.com iframe not found after 30s"),
+      { step: "iframe_not_found" }
     );
   }
-  await sleep(3_000);
 
-  // 3. Click "Sign Up" link on login page → navigates to sso/register page
-  //    Login page (sso/login.htm) has: "Don't have an account? [Sign Up]" → sso/register?...
-  onStep?.("clicking_signup_link", "Clicking Sign Up link to go to register page");
-  const signUpLinkSelectors = [
-    'a:has-text("Sign Up")',
-    'a:has-text("Register")',
-    'a:has-text("Create account")',
-    'a[href*="register" i]',
-  ];
-  let linkClicked = false;
-  for (const sel of signUpLinkSelectors) {
-    const el = page.locator(sel).first();
-    const visible = await el.isVisible({ timeout: 2_000 }).catch(() => false);
-    if (visible) {
-      await el.click({ timeout: 5_000 }).catch(() => null);
-      linkClicked = true;
-      onStep?.("signup_link_clicked", "Navigating to register page");
-      break;
+  // ── Step 3: Individual account type + Next ──────────────────────────────────
+  onStep?.("selecting_individual", "Selecting Individual account type");
+  let individualLabel = null;
+  for (let i = 0; i < 10; i++) {
+    const labels = await frame.locator("label").all();
+    for (const lbl of labels) {
+      const txt = await lbl.innerText().catch(() => "");
+      if (txt.trim().toLowerCase().includes("individual")) {
+        const vis = await lbl.isVisible().catch(() => false);
+        if (vis) { individualLabel = lbl; break; }
+      }
     }
+    if (individualLabel) break;
+    await sleep(2_000);
+    frame = await findRegisterFrame(page);
+    if (!frame) break;
   }
-  if (!linkClicked) {
-    onStep?.("signup_link_not_found", "Sign Up link not found — checking if already on register page");
-  }
-
-  // 3b. Wait for register page (sso/register) — it's a separate URL, not a tab
-  onStep?.("waiting_register_page", "Waiting for register page to load");
-  const regLanded = await pollUrl(
-    (u) => u.includes("account.alibabacloud.com/sso/register"),
-    { timeout: 15_000 }
-  );
-  if (!regLanded) {
+  if (!individualLabel) {
     throw Object.assign(
-      new Error(`Never reached register page — stuck at: ${page.url().slice(0, 100)}`),
-      { step: "register_page_not_reached" }
+      new Error("Individual label not found in register frame"),
+      { step: "individual_not_found" }
     );
   }
-  await sleep(3_000);
-
-  // 4. Fill email
-  onStep?.("filling_email", "Filling email field");
-  const emailSelectors = [
-    'input[type="email"]',
-    'input[name="email"]',
-    'input[id*="email" i]',
-    'input[placeholder*="email" i]',
-    'input[autocomplete="username"]',
-    'input[autocomplete="email"]',
-  ].join(", ");
-  const emailInput = page.locator(emailSelectors).first();
-  const emailVisible = await emailInput.isVisible({ timeout: 10_000 }).catch(() => false);
-  if (emailVisible) {
-    await emailInput.fill(email, { timeout: 10_000 });
-    onStep?.("email_filled", `Filled email: ${email}`);
-  } else {
-    throw Object.assign(new Error("Email input not found on register form"), { step: "email_input_not_found" });
-  }
-  // Wait for email value to register + check_email.do validation to complete.
-  // The Send Code button is typically disabled until email validation passes.
+  await individualLabel.click();
   await sleep(2_000);
+  // Click Next link
+  const nextLink = await frame.locator("a").filter({ hasText: "Next" }).first();
+  const nextLinkVis = await nextLink.isVisible().catch(() => false);
+  if (nextLinkVis) await nextLink.click();
+  await sleep(5_000);
 
-  // 5. Click "Next" button → sends OTP (sendEmailCodeForEmailCodeRegister.do)
-  //    The register page has a "Next" button (NOT "Send Code" — that's on the login page)
-  onStep?.("clicking_next", "Clicking Next button to send OTP");
-  const nextBtnSelectors = [
-    'button:has-text("Next")',
-    'button:has-text("Continue")',
-    'button[type="submit"]',
-    '[role="button"]:has-text("Next")',
-    'button:has-text("Sign Up")',
-  ];
-  let codeSent = false;
-  const nextDeadline = Date.now() + 15_000;
-  while (Date.now() < nextDeadline && !codeSent) {
-    for (const sel of nextBtnSelectors) {
-      const btn = page.locator(sel).first();
-      const visible = await btn.isVisible({ timeout: 500 }).catch(() => false);
-      if (visible) {
-        const disabled = await btn.isDisabled().catch(() => false);
-        if (disabled) continue;
-        await btn.click({ timeout: 5_000 }).catch(() => null);
-        codeSent = true;
-        onStep?.("code_sent", "Next clicked — OTP sent to email");
-        break;
-      }
-    }
-    if (!codeSent) {
-      // Fallback: scan all buttons for relevant text
-      const buttons = await page.locator("button, [role='button']").all();
-      for (const btn of buttons) {
-        const txt = (await btn.innerText().catch(() => "")).trim().toLowerCase();
-        if ((txt.includes("next") || txt.includes("continue") || txt.includes("sign up") || txt.includes("submit")) && await btn.isVisible().catch(() => false)) {
-          const disabled = await btn.isDisabled?.().catch(() => false);
-          if (disabled) continue;
-          await btn.click().catch(() => null);
-          codeSent = true;
-          onStep?.("code_sent", `Clicked button: ${txt}`);
-          break;
-        }
-      }
-    }
-    if (!codeSent) {
-      onStep?.("next_button_waiting", "Waiting for Next button to become available…");
-      await sleep(1_000);
-    }
-  }
-  if (!codeSent) {
-    throw Object.assign(
-      new Error("Next button not found or not clickable after 15s — email validation may have failed"),
-      { step: "next_button_not_found" }
-    );
-  }
-  // Record timestamp — OTP email should arrive AFTER this point.
-  // Passed to readOtpFromImap to narrow search window (prevents OTP theft in concurrent runs)
-  const otpSentAt = new Date();
-  // Wait for OTP input to appear (form advances to next step after Next)
+
+  // ── Step 4: Fill form (email, password, confirmPwd) ─────────────────────────
+  onStep?.("filling_form", "Filling email and password fields");
+  frame = await findRegisterFrame(page);
   await sleep(3_000);
 
-  // 6. Handle slider CAPTCHA if present (may appear after sending code)
-  onStep?.("checking_captcha", "Checking for CAPTCHA after send code");
-  await handleSliderCaptchaIfPresent(page, { onStep });
-  for (const f of page.frames()) {
-    if (f.url().includes("punish") || f.url().includes("captcha")) {
-      await handleSliderCaptchaIfPresent(f, { onStep });
-    }
-  }
-  await sleep(1_000);
+  const emailField = frame.locator("#email");
+  const pwField = frame.locator("#password");
+  const confirmField = frame.locator("#confirmPwd");
 
-  // 7. Poll IMAP for OTP (code was sent in step 5)
-  onStep?.("waiting_otp", `Polling IMAP for OTP to ${email} (up to 120s)`);
-  const otp = await readOtpFromImap(email, imapConfig, { timeout: 120_000, since: otpSentAt });
-  if (!otp) {
+  if (!(await emailField.count()) || !(await pwField.count())) {
     throw Object.assign(
-      new Error(`OTP not received within 120s for ${email}`),
-      { step: "otp_timeout" }
+      new Error("Email or password fields not found in register frame"),
+      { step: "form_fields_not_found" }
     );
   }
-  onStep?.("otp_received", `OTP received: ${otp}`);
-  await sleep(1_000);
 
-  // 8. Fill OTP verification code — checkEmailCodeForEmailCodeRegister.do fires
-  //    BEFORE nationality selection (HAR: OTP verify → getCountryList → emailCodeRegister)
-  onStep?.("filling_otp", "Filling OTP code");
-  const otpSelectors = [
-    '#emailCaptcha',
-    'input[name="emailCaptcha"]',
-    'input[name*="otp" i]',
-    'input[name*="code" i]',
-    'input[placeholder*="code" i]',
-    'input[placeholder*="verification" i]',
-    'input[maxlength="6"]',
-    'input[name*="verif" i]',
-    'input[id*="code" i]',
-    'input[id*="otp" i]',
-    'input[name*="captcha" i]',
-    'input[autocomplete="one-time-code"]',
-  ].join(", ");
-  const otpInput = page.locator(otpSelectors).first();
-  const otpVisible = await otpInput.isVisible({ timeout: 5_000 }).catch(() => false);
-  if (otpVisible) {
-    await otpInput.fill(otp, { timeout: 5_000 });
-    onStep?.("otp_filled", "Filled OTP input");
-  } else {
-    // fallback: multiple single-digit inputs
-    const singleInputs = await page.locator('input[type="text"], input:not([type])').all();
-    const visibleInputs = [];
-    for (const inp of singleInputs) {
-      if (await inp.isVisible().catch(() => false)) visibleInputs.push(inp);
-    }
-    if (visibleInputs.length >= 6) {
-      for (let i = 0; i < 6; i++) {
-        await visibleInputs[i].fill(otp[i]);
-      }
-      onStep?.("otp_filled", "Filled OTP into individual digit inputs");
-    } else {
-      throw Object.assign(new Error("Could not find OTP input field"), { step: "otp_input_not_found" });
-    }
-  }
-  // Wait for OTP verification to complete server-side (checkEmailCodeForEmailCodeRegister.do)
-  // — nationality dropdown only appears AFTER OTP is verified
-  await sleep(3_000);
-
-  // 9. Select Singapore nationality (region) — appears AFTER OTP verification
-  //    Approach: iterate ALL <select> elements, find one with "Singapore" option
-  //    (mirrors alibaba-cloud-farm reference — more robust than guessing id/name)
-  onStep?.("selecting_country", "Selecting Singapore as country/region");
-  let countrySelected = false;
-
-  // Also check inside frames (register form may be in an iframe)
-  const searchTargets = [page, ...page.frames()];
-  for (const target of searchTargets) {
-    if (countrySelected) break;
-    const allSelects = await target.locator("select").all();
-    for (const sel of allSelects) {
-      if (countrySelected) break;
-      if (!(await sel.isVisible().catch(() => false))) continue;
-      const options = await sel.locator("option").all();
-      for (const opt of options) {
-        const text = (await opt.innerText().catch(() => "")).toLowerCase();
-        if (text.includes("singapore")) {
-          const val = await opt.getAttribute("value").catch(() => null);
-          if (val) {
-            await sel.selectOption({ value: val }).catch(() => null);
-          } else {
-            await sel.selectOption({ label: "Singapore" }).catch(() => null);
-          }
-          countrySelected = true;
-          onStep?.("country_selected", "Selected Singapore (native select)");
-          break;
-        }
-      }
-    }
-  }
-
-  if (!countrySelected) {
-    // Fallback: combobox with country/region placeholder (same as GSuite completeRegistration)
-    const countryComboSel = [
-      'input[role="combobox"][placeholder*="country" i]',
-      'input[role="combobox"][placeholder*="region" i]',
-      'input[role="combobox"][placeholder*="Select your" i]',
-    ].join(", ");
-    for (const target of searchTargets) {
-      if (countrySelected) break;
-      const combo = target.locator(countryComboSel).first();
-      const comboVisible = await combo.isVisible({ timeout: 1_000 }).catch(() => false);
-      if (comboVisible) {
-        await combo.click({ timeout: 3_000 }).catch(() => null);
-        await sleep(400);
-        await combo.fill("Singapore").catch(() => null);
-        await sleep(600);
-        const sgOptSel = [
-          'li:has-text("Singapore")',
-          '[role="option"]:has-text("Singapore")',
-          '[role="listbox"] *:has-text("Singapore")',
-          'div[class*="option"]:has-text("Singapore")',
-        ].join(", ");
-        const sgOpt = target.locator(sgOptSel).first();
-        if (await sgOpt.isVisible({ timeout: 2_000 }).catch(() => false)) {
-          await sgOpt.click({ timeout: 3_000 }).catch(() => null);
-          countrySelected = true;
-          onStep?.("country_selected", "Selected Singapore (combobox)");
-          await sleep(400);
-        }
-      }
-    }
-  }
-
-  if (!countrySelected) {
-    onStep?.("country_not_found", "Country selection not found — proceeding without it");
+  // Fill email char-by-char
+  await emailField.click();
+  await sleep(300);
+  for (const ch of email) {
+    await page.keyboard.type(ch, { delay: 30 });
   }
   await sleep(500);
 
-  // 10. Check agreement checkbox if present
-  const checkbox = page.locator('input[type="checkbox"]').first();
-  const cbVisible = await checkbox.isVisible({ timeout: 2_000 }).catch(() => false);
-  if (cbVisible) {
-    const checked = await checkbox.isChecked().catch(() => true);
-    if (!checked) {
-      await checkbox.click();
-      onStep?.("accepted_terms", "Checked agreement checkbox");
-    }
-  }
+  // Fill password char-by-char
+  await pwField.click();
   await sleep(300);
+  for (const ch of password) {
+    await page.keyboard.type(ch, { delay: 30 });
+  }
+  await sleep(500);
 
-  // 11. Click Continue / Sign Up (final submit) → emailCodeRegister.do → SSO redirect
-  //     Button text is "Continue" on the Qwen Cloud onboarding page (same as GSuite completeRegistration)
-  onStep?.("clicking_signup", "Clicking Continue / Sign Up button");
-  const submitSel = [
-    'button:has-text("Continue")',
-    'button:has-text("Lanjutkan")',
-    'button:has-text("Complete")',
-    'button:has-text("Submit")',
-    'button:has-text("Confirm")',
-    'button:has-text("Sign Up")',
-    'button:has-text("Register")',
-    'button:has-text("Create Account")',
-    'button[type="submit"]',
-  ].join(", ");
-  // Search page + all frames
-  const searchTargets2 = [page, ...page.frames()];
-  let submitClicked = false;
-  for (const target of searchTargets2) {
-    if (submitClicked) break;
-    const submitLoc = target.locator(submitSel).first();
-    const visible = await submitLoc.isVisible({ timeout: 1_000 }).catch(() => false);
-    if (visible) {
-      const txt = await submitLoc.innerText().catch(() => "");
-      await submitLoc.click({ timeout: 5_000 }).catch(() => null);
-      submitClicked = true;
-      onStep?.("signup_submitted", `Clicked: ${txt.trim().slice(0, 40)}`);
+  // Fill confirmPwd char-by-char
+  if (await confirmField.count()) {
+    await confirmField.click();
+    await sleep(300);
+    for (const ch of password) {
+      await page.keyboard.type(ch, { delay: 30 });
     }
   }
-  if (!submitClicked) {
-    onStep?.("signup_button_not_found", "Submit button not found — trying all buttons");
-    const fallbackTargets = [page, ...page.frames()];
-    for (const target of fallbackTargets) {
-      if (submitClicked) break;
-      const allBtns = await target.locator("button, [role='button']").all();
-      for (const btn of allBtns) {
-        const txt = (await btn.innerText().catch(() => "")).trim().toLowerCase();
-        if ((txt.includes("continue") || txt.includes("submit") || txt.includes("sign up") || txt.includes("confirm") || txt.includes("register")) && await btn.isVisible().catch(() => false)) {
-          await btn.click();
-          submitClicked = true;
-          onStep?.("signup_submitted", `Clicked: ${txt}`);
+  await sleep(1_000);
+
+  // ── Step 5: Click initial Sign Up button ─────────────────────────────────────
+  onStep?.("clicking_signup", "Clicking initial Sign Up button");
+  const allBtns = await frame.locator("button").all();
+  let signupClicked = false;
+  for (const btn of allBtns) {
+    const txt = (await btn.innerText().catch(() => "")).toLowerCase();
+    if (txt.includes("sign up")) {
+      await btn.click();
+      signupClicked = true;
+      break;
+    }
+  }
+  if (!signupClicked) {
+    throw Object.assign(
+      new Error("Sign Up button not found in register frame"),
+      { step: "signup_button_not_found" }
+    );
+  }
+
+  // ── Step 6: Poll for tabs (success) or slider (captcha) ──────────────────────
+  onStep?.("checking_captcha", "Checking for captcha or form advance");
+  let tabsFound = false;
+  for (let wait = 0; wait < 15; wait++) {
+    await sleep(2_000);
+    frame = await findRegisterFrame(page);
+    if (!frame) continue;
+
+    const tabs = await frame.locator("li[role='tab']").all();
+    if (tabs.length > 0) {
+      tabsFound = true;
+      break;
+    }
+
+    const slider = frame.locator("#risk_slider_container");
+    const sliderVis = await slider.isVisible().catch(() => false);
+    if (sliderVis) {
+      const solved = await handleSliderCaptchaIfPresent(frame, { onStep, mouseCtx: page });
+      if (solved) {
+        await sleep(3_000);
+        frame = await findRegisterFrame(page);
+        if (frame) {
+          const tabsAfter = await frame.locator("li[role='tab']").all();
+          if (tabsAfter.length > 0) { tabsFound = true; break; }
+        }
+      } else {
+        throw Object.assign(
+          new Error("Slider captcha could not be solved"),
+          { step: "slider_failed" }
+        );
+      }
+    }
+  }
+  if (!tabsFound) {
+    throw Object.assign(
+      new Error("Form did not advance after Sign Up — no tabs appeared"),
+      { step: "form_submit_failed" }
+    );
+  }
+
+  // ── Step 7: Select email verification tab (index 1) ──────────────────────────
+  onStep?.("selecting_email_tab", "Selecting email verification tab");
+  frame = await findRegisterFrame(page);
+  const tabs = await frame.locator("li[role='tab']").all();
+  if (tabs.length >= 2) {
+    await tabs[1].click();
+    await sleep(3_000);
+  }
+
+  // ── Step 8: Select Singapore country ─────────────────────────────────────────
+  onStep?.("selecting_country", "Selecting Singapore country code");
+  frame = await findRegisterFrame(page);
+  const selects = await frame.locator("select").all();
+  let countrySelected = false;
+  for (const sel of selects) {
+    const options = await sel.locator("option").all();
+    for (const opt of options) {
+      const txt = (await opt.innerText().catch(() => "")).toLowerCase();
+      if (txt.includes("singapore")) {
+        const val = await opt.getAttribute("value").catch(() => null);
+        if (val) {
+          await sel.selectOption({ value: val }).catch(() => null);
+        } else {
+          await sel.selectOption({ label: "Singapore" }).catch(() => null);
+        }
+        countrySelected = true;
+        break;
+      }
+    }
+    if (countrySelected) break;
+  }
+
+  // ── Step 9: Click Send button ─────────────────────────────────────────────────
+  onStep?.("clicking_send", "Clicking Send verification code button");
+  frame = await findRegisterFrame(page);
+  const sendBtns = await frame.locator("button, [role='button']").all();
+  for (const btn of sendBtns) {
+    const txt = (await btn.innerText().catch(() => "")).toLowerCase();
+    const vis = await btn.isVisible().catch(() => false);
+    if (vis && txt.includes("send")) {
+      await btn.click();
+      break;
+    }
+  }
+  await sleep(3_000);
+
+  // ── Step 10: Read OTP from IMAP ───────────────────────────────────────────────
+  onStep?.("waiting_otp", "Waiting for OTP email");
+  const otpSentAt = new Date();
+  const otp = await readOtpFromImap(email, imapConfig, { timeout: 120_000, since: otpSentAt });
+  if (!otp) {
+    throw Object.assign(new Error("OTP not received within timeout"), { step: "otp_timeout" });
+  }
+  onStep?.("otp_received", `OTP received: ${otp}`);
+
+  // ── Step 11: Fill OTP ─────────────────────────────────────────────────────────
+  onStep?.("filling_otp", "Filling OTP code");
+  frame = await findRegisterFrame(page);
+  let otpInput = null;
+
+  // Try known selectors first
+  const otpSelectors = [
+    "#emailCaptcha",
+    "input[name='emailCaptcha']",
+    "input[placeholder*='code']",
+    "input[placeholder*='verification']",
+    "input[name*='code']",
+    "input[name*='captcha']",
+  ];
+  for (const sel of otpSelectors) {
+    const el = frame.locator(sel).first();
+    if (await el.count() && await el.isVisible().catch(() => false)) {
+      otpInput = el;
+      break;
+    }
+  }
+
+  // Fallback: first visible input that is not email/country/checkbox
+  if (!otpInput) {
+    const allInputs = await frame.locator("input").all();
+    for (const inp of allInputs) {
+      try {
+        if (!await inp.isVisible().catch(() => false)) continue;
+        const id = (await inp.getAttribute("id").catch(() => "") || "").toLowerCase();
+        const name = (await inp.getAttribute("name").catch(() => "") || "").toLowerCase();
+        const type = (await inp.getAttribute("type").catch(() => "") || "").toLowerCase();
+        if (id === "email" || name === "email") continue;
+        if (id.includes("country") || name.includes("country")) continue;
+        if (type === "checkbox") continue;
+        otpInput = inp;
+        break;
+      } catch { /* skip */ }
+    }
+  }
+
+  if (otpInput) {
+    await otpInput.click();
+    await sleep(200);
+    for (const ch of otp) {
+      await page.keyboard.type(ch, { delay: 30 });
+    }
+  }
+  await sleep(500);
+
+  // ── Step 12: Check agreement checkbox ────────────────────────────────────────
+  onStep?.("accepting_terms", "Checking terms agreement checkbox");
+  frame = await findRegisterFrame(page);
+  const checkbox = frame.locator("input[type='checkbox']").first();
+  if (await checkbox.count()) {
+    const checked = await checkbox.isChecked().catch(() => true);
+    if (!checked) await checkbox.click();
+  }
+
+  // ── Step 13: Click final Sign Up / Confirm button ────────────────────────────
+  onStep?.("final_submit", "Clicking final Sign Up / Confirm button");
+  frame = await findRegisterFrame(page);
+  const finalBtns = await frame.locator("button, [role='button']").all();
+  for (const btn of finalBtns) {
+    const txt = (await btn.innerText().catch(() => "")).toLowerCase();
+    if (txt.includes("sign up") || txt.includes("confirm") || txt.includes("register")) {
+      await btn.click();
+      break;
+    }
+  }
+  await sleep(8_000);
+
+  // ── Step 14: Check if still on register page (failure) ───────────────────────
+  const postUrl = page.url();
+  if (postUrl.includes("register")) {
+    const bodyTxt = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
+    if (bodyTxt.includes("verification code") || bodyTxt.includes("sign up")) {
+      throw Object.assign(
+        new Error("Still on register page after final submit — registration failed"),
+        { step: "registration_failed" }
+      );
+    }
+  }
+
+  // ── Step 15: Navigate to Model Studio (session carries from register) ────────
+  onStep?.("waiting_dashboard", "Opening Model Studio (session carries from register)");
+  await page.goto("https://modelstudio.console.alibabacloud.com/", {
+    waitUntil: "domcontentloaded", timeout: 120_000
+  });
+
+  // Poll up to 90s for SPA to load — check for login page (session lost) or dashboard
+  let dashboardLoaded = false;
+  for (let wait = 0; wait < 30; wait++) {
+    await sleep(3_000);
+    const bodyTxt = await page.locator("body").innerText().catch(() => "");
+    if (/sign in|enter your email|log on/i.test(bodyTxt)) {
+      throw Object.assign(
+        new Error("Session lost after registration — Model Studio redirected to login"),
+        { step: "session_lost" }
+      );
+    }
+    if (/dashboard|model studio|api/i.test(bodyTxt)) {
+      dashboardLoaded = true;
+      break;
+    }
+  }
+
+  // ── Step 16: Click Dashboard tab via JS evaluate (15 retries × 2s) ───────────
+  onStep?.("clicking_dashboard", "Clicking Dashboard tab in top nav");
+  for (let wait = 0; wait < 15; wait++) {
+    const clicked = await page.evaluate(() => {
+      const els = document.querySelectorAll('a, span, li, [role="tab"], div');
+      for (const el of els) {
+        const txt = (el.innerText || el.textContent || '').trim();
+        if (txt === 'Dashboard') {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) { el.click(); return true; }
+        }
+      }
+      return false;
+    });
+    if (clicked) break;
+    await sleep(2_000);
+  }
+  await sleep(5_000);
+
+  // ── Step 17: Navigate to API Key page (4 search rounds + direct URL fallback) ─
+  onStep?.("navigating_apikey", "Navigating to API Key page");
+  // First: dismiss any modal overlays (3 attempts)
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(() => {
+      const modals = document.querySelectorAll('[class*="modal"], [role="dialog"], [class*="dialog"]');
+      for (const m of modals) {
+        const rect = m.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const btns = m.querySelectorAll('button, [role="button"], .ant-modal-close, [class*="close"]');
+        for (const b of btns) {
+          const txt = (b.innerText || '').toLowerCase();
+          if (txt.includes('ok') || txt.includes('close') || txt.includes('got it') || txt.includes('confirm') || b.className.includes('close')) {
+            b.click(); return true;
+          }
+        }
+      }
+      return false;
+    });
+    await sleep(1_000);
+    await page.keyboard.press("Escape").catch(() => null);
+    await sleep(1_000);
+  }
+
+  let apiKeyPageReached = false;
+  for (let searchRound = 0; searchRound < 4; searchRound++) {
+    // Scroll all scrollable containers to bottom
+    await page.evaluate(() => {
+      document.querySelectorAll('*').forEach(el => {
+        if (el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+      });
+    });
+    await sleep(2_000);
+
+    // Click "API Key" via JS evaluate (own text node match first, then innerText)
+    const clicked = await page.evaluate(() => {
+      const els = document.querySelectorAll('a, span, li, [role="menuitem"], button, div, p');
+      for (const el of els) {
+        const ownText = Array.from(el.childNodes)
+          .filter(n => n.nodeType === 3)
+          .map(n => n.textContent.trim()).join('');
+        if (ownText === 'API Key' || ownText === 'api-key' || ownText === 'API key') {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) { el.click(); return true; }
+        }
+      }
+      for (const el of els) {
+        const txt = (el.innerText || '').trim();
+        if (txt === 'API Key' || txt === 'api-key') {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) { el.click(); return true; }
+        }
+      }
+      return false;
+    });
+
+    if (clicked) { apiKeyPageReached = true; break; }
+
+    if (searchRound === 0) {
+      // Try expanding "Manage" section
+      const allEls = await page.locator("span, div, a").all();
+      for (const el of allEls) {
+        const txt = (await el.innerText().catch(() => "")).trim().toLowerCase();
+        if (txt === "manage" && await el.isVisible().catch(() => false)) {
+          await el.click().catch(() => null);
+          await sleep(2_000);
           break;
         }
       }
+    } else if (searchRound === 2) {
+      // Direct URL fallback
+      await page.goto(
+        "https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=dashboard#/api-key",
+        { waitUntil: "domcontentloaded", timeout: 60_000 }
+      );
+      await sleep(5_000);
+      apiKeyPageReached = true;
+      break;
     }
   }
-  await sleep(5_000);
 
-  // 12. Handle slider CAPTCHA if present (may appear after final signup)
-  onStep?.("checking_captcha_final", "Checking for CAPTCHA after signup");
-  await handleSliderCaptchaIfPresent(page, { onStep });
-  for (const f of page.frames()) {
-    if (f.url().includes("punish") || f.url().includes("captcha")) {
-      await handleSliderCaptchaIfPresent(f, { onStep });
-    }
+  if (!apiKeyPageReached) {
+    // Final check: body text may already show API key page
+    const body = await page.locator("body").innerText().catch(() => "");
+    if (/api key|create/i.test(body)) apiKeyPageReached = true;
   }
+
   await sleep(5_000);
 
-  // 13. Wait for home.qwencloud.com landing (SSO redirect after registration)
-  //     After emailCodeRegister.do succeeds → 302 login_aliyun → ssoLogin?code=… → home.qwencloud.com
-  //     Then reuse GSuite post-login flow: extractSecToken → callApiGateway → createApiKey
-  onStep?.("waiting_for_landing", "Waiting for Qwen Cloud dashboard");
-  const landed = await pollUrl((u) => u.includes("home.qwencloud.com"), { timeout: 60_000 });
-  if (!landed) {
+  // Check for session loss after navigation
+  const bodyAfterNav = await page.locator("body").innerText().catch(() => "");
+  if (/sign in|enter your email/i.test(bodyAfterNav)) {
     throw Object.assign(
-      new Error(`Never landed on home.qwencloud.com — stuck at: ${page.url().slice(0, 100)}`),
-      { step: "navigation_failed" }
+      new Error("Session lost — API Key page redirected to login"),
+      { step: "session_lost" }
     );
   }
-  // 14. Wait for SPA to finish loading + extract cookies
-  //     DO NOT reload page — the SSO code in ssoLogin?code=… is one-time use.
-  //     Reloading triggers a new SSO redirect which fails (code already consumed) → no auth cookie.
-  //     Just wait for network to settle, then extract cookies (same as GSuite flow).
-  onStep?.("extracting_cookies", "Extracting session cookies");
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => null);
+
+  // ── Step 18: Click "Create API Key" button (10 retries × 2s, via JS evaluate) ─
+  onStep?.("creating_api_key", "Clicking Create API Key button");
+  // Scroll right in case button is hidden
+  await page.evaluate(() => {
+    document.querySelectorAll('*').forEach(el => {
+      if (el.scrollWidth > el.clientWidth) el.scrollLeft = el.scrollWidth;
+    });
+  });
   await sleep(2_000);
 
-  let rawCookies = await page.context().cookies();
-  let cookieMap = Object.fromEntries(rawCookies.map((c) => [c.name, c.value]));
-  let cookieHeader = rawCookies.map((c) => `${c.name}=${c.value}`).join("; ");
-
-  console.log(`[QwenRegister] Got ${rawCookies.length} cookies, has ticket: ${!!cookieMap.login_qwencloud_ticket}`);
-
-  // Retry if auth cookie not yet set (SPA may need more time to settle)
-  if (!cookieMap.login_qwencloud_ticket) {
-    onStep?.("waiting_auth_cookie", "Auth cookie not found — retrying…");
-    for (let i = 0; i < 5; i++) {
-      await sleep(3_000);
-      rawCookies = await page.context().cookies();
-      cookieMap = Object.fromEntries(rawCookies.map((c) => [c.name, c.value]));
-      cookieHeader = rawCookies.map((c) => `${c.name}=${c.value}`).join("; ");
-      console.log(`[QwenRegister] Retry ${i+1}/5: ${rawCookies.length} cookies, has ticket: ${!!cookieMap.login_qwencloud_ticket}`);
-      if (cookieMap.login_qwencloud_ticket) break;
-    }
-  }
-
-  if (!cookieMap.login_qwencloud_ticket) {
-    throw Object.assign(
-      new Error("login_qwencloud_ticket cookie not found after registration — authentication may have failed"),
-      { step: "cookie_missing" }
-    );
-  }
-
-  onStep?.("extracting_sec_token", "Fetching sec_token");
-  const secToken = await extractSecToken(cookieHeader);
-  if (!secToken) {
-    throw Object.assign(new Error("Failed to extract sec_token"), { step: "sec_token_failed" });
-  }
-
-  // 15. Create API key (retry 3x for NotAuthorised)
-  onStep?.("creating_api_key", "Creating Qwen Cloud API key");
-  let createResp;
-  const CREATE_RETRIES = 3;
-  const CREATE_RETRY_DELAY = 8_000;
-  for (let attempt = 1; attempt <= CREATE_RETRIES; attempt++) {
-    createResp = await callApiGateway(
-      cookieHeader,
-      secToken,
-      QWEN_API_NAME,
-      { description: `poolprox-${Date.now()}` }
-    );
-    const errMsg = createResp?.data?.errorMsg || createResp?.data?.DataV2?.errorMsg || "";
-    if (errMsg.includes("NotAuthorised") || errMsg.includes("NotAuthorized")) {
-      if (attempt < CREATE_RETRIES) {
-        onStep?.("creating_api_key", `Workspace not ready (attempt ${attempt}/${CREATE_RETRIES}) — retrying in ${CREATE_RETRY_DELAY / 1000}s`);
-        await sleep(CREATE_RETRY_DELAY);
-        continue;
+  let createClicked = false;
+  for (let wait = 0; wait < 10; wait++) {
+    const clicked = await page.evaluate(() => {
+      const btns = document.querySelectorAll('button, [role="button"], a');
+      for (const b of btns) {
+        const txt = (b.innerText || '').trim().toLowerCase();
+        const rect = b.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          if (txt.includes('create') && (txt.includes('api') || txt.includes('key'))) {
+            b.click(); return txt;
+          }
+          if (txt === 'create') { b.click(); return txt; }
+        }
       }
-    }
-    break;
+      return null;
+    });
+    if (clicked) { createClicked = true; break; }
+    await sleep(2_000);
   }
 
-  const inner      = createResp?.data?.DataV2?.data?.data ?? {};
-  const apiKey      = inner.key || inner.apiKey || inner.api_key || "";
-  const workspaceId = inner.workspace_id || "";
-  const gmtExpire   = inner.gmt_expire || "";
-  const keyId       = String(inner.id || "");
+  if (!createClicked) {
+    throw Object.assign(
+      new Error("Create API Key button not found on API Key page"),
+      { step: "create_button_not_found" }
+    );
+  }
+  await sleep(5_000);
+
+  // ── Step 19: Click OK in the Create API Key modal (10 retries × 2s) ──────────
+  onStep?.("confirming_api_key", "Clicking OK in Create API Key form");
+  let okClicked = false;
+  for (let wait = 0; wait < 10; wait++) {
+    const clicked = await page.evaluate(() => {
+      const modals = document.querySelectorAll('[class*="modal"], [role="dialog"], [class*="dialog"]');
+      for (const m of modals) {
+        const rect = m.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const btns = m.querySelectorAll('button, [role="button"]');
+        for (const b of btns) {
+          const txt = (b.innerText || '').trim().toLowerCase();
+          const brect = b.getBoundingClientRect();
+          if (brect.width > 0 && brect.height > 0 && txt === 'ok') { b.click(); return true; }
+        }
+      }
+      const allBtns = document.querySelectorAll('button, [role="button"]');
+      for (const b of allBtns) {
+        const txt = (b.innerText || '').trim().toLowerCase();
+        const brect = b.getBoundingClientRect();
+        if (brect.width > 0 && brect.height > 0 && txt === 'ok') { b.click(); return true; }
+      }
+      return false;
+    });
+    if (clicked) { okClicked = true; break; }
+    await sleep(2_000);
+  }
+  // okClicked failure is non-fatal — key may still appear
+
+  // ── Step 20: Extract API key from DOM (30 retries × 2s) ──────────────────────
+  onStep?.("extracting_api_key", "Extracting API key from page");
+  let apiKey = null;
+  for (let wait = 0; wait < 30; wait++) {
+    const found = await page.evaluate(() => {
+      // Method 1: input with sk- value
+      for (const inp of document.querySelectorAll('input')) {
+        const val = inp.value || inp.getAttribute('value') || '';
+        if (val.startsWith('sk-') && val.length > 20) return val;
+      }
+      // Method 2: element text containing sk-
+      for (const el of document.querySelectorAll('span, div, p, code, td, [class*="modal"], [role="dialog"]')) {
+        const txt = el.innerText || el.textContent || '';
+        const m = txt.match(/sk-[A-Za-z0-9._\-]+/);
+        if (m && m[0].length > 20) return m[0];
+      }
+      // Method 3: textarea
+      for (const ta of document.querySelectorAll('textarea')) {
+        const val = ta.value || '';
+        if (val.startsWith('sk-') && val.length > 20) return val;
+      }
+      return null;
+    });
+
+    if (found) { apiKey = found; break; }
+
+    // At wait=5: try clicking copy button, then clipboard
+    if (wait === 5) {
+      await page.evaluate(() => {
+        const btns = document.querySelectorAll('button, [role="button"]');
+        for (const b of btns) {
+          const txt = (b.innerText || '').toLowerCase();
+          if (txt.includes('copy') || b.className.includes('copy')) { b.click(); return true; }
+        }
+        return false;
+      });
+      await sleep(1_000);
+      try {
+        const clip = await page.evaluate(() => navigator.clipboard.readText());
+        if (clip && clip.startsWith('sk-') && clip.length > 20) { apiKey = clip; break; }
+      } catch { /* clipboard may not be available */ }
+    }
+
+    if (wait % 5 === 0) onStep?.("extracting_api_key", `Still waiting for API key... (${wait * 2}s)`);
+    await sleep(2_000);
+  }
+
+  // Close modal after extracting key
+  if (apiKey) {
+    await page.evaluate(() => {
+      const btns = document.querySelectorAll('button, [role="button"]');
+      for (const b of btns) {
+        const txt = (b.innerText || '').toLowerCase();
+        const rect = b.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          if (txt.includes('ok') || txt.includes('close') || txt.includes('done') || txt.includes('confirm')) {
+            b.click(); return true;
+          }
+        }
+      }
+      return false;
+    });
+  }
 
   if (!apiKey) {
-    const errMsg =
-      createResp?.data?.errorMsg ||
-      createResp?.data?.DataV2?.errorMsg ||
-      JSON.stringify(createResp).slice(0, 300);
     throw Object.assign(
-      new Error(`createApiKey returned no key: ${errMsg}`),
-      { step: "key_creation_failed" }
+      new Error("API key not found in page after 60s — extraction failed"),
+      { step: "key_extraction_failed" }
     );
   }
 
-  return { apiKey, keyId, workspaceId, gmtExpire };
+  onStep?.("key_verified", `API key extracted: ${apiKey.slice(0, 20)}...`);
+  return { apiKey, keyId: null, workspaceId: null, gmtExpire: null };
 }
 
 // ─── Manager class ────────────────────────────────────────────────────────────

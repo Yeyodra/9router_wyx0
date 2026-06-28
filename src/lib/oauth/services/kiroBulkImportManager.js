@@ -287,9 +287,78 @@ async function defaultSocialExchange(args) {
   return exchangeAndSaveKiroSocialConnection(args);
 }
 
+// ─── Fingerprint randomization pool ──────────────────────────────────────────
+const FP_USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+];
+const FP_VIEWPORTS = [
+  { width: 1920, height: 1080 },
+  { width: 1440, height: 900 },
+  { width: 1536, height: 864 },
+  { width: 1366, height: 768 },
+  { width: 1280, height: 800 },
+  { width: 1280, height: 720 },
+  { width: 1600, height: 900 },
+  { width: 2560, height: 1440 },
+];
+const FP_LOCALES = ["en-US", "en-GB", "en-CA", "en-AU", "en-SG"];
+const FP_TIMEZONES = [
+  "America/New_York", "America/Chicago", "America/Los_Angeles",
+  "America/Toronto", "Europe/London", "Europe/Berlin",
+  "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney",
+];
+const FP_COLOR_SCHEMES = ["light", "no-preference"];
+
+function randomPick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function buildRandomFingerprint() {
+  const viewport = randomPick(FP_VIEWPORTS);
+  // Add ±20px jitter so no two sessions share identical dimensions
+  return {
+    userAgent: randomPick(FP_USER_AGENTS),
+    viewport: {
+      width: viewport.width + Math.floor((Math.random() - 0.5) * 40),
+      height: viewport.height + Math.floor((Math.random() - 0.5) * 20),
+    },
+    locale: randomPick(FP_LOCALES),
+    timezoneId: randomPick(FP_TIMEZONES),
+    colorScheme: randomPick(FP_COLOR_SCHEMES),
+    deviceScaleFactor: randomPick([1, 1, 1, 1.25, 1.5, 2]),
+    isMobile: false,
+    hasTouch: false,
+  };
+}
+
 export async function createFreshContext(browser) {
-  const context = await browser.newContext();
+  const fp = buildRandomFingerprint();
+  const context = await browser.newContext(fp);
   const page = await context.newPage();
+  // Override navigator properties that Playwright does not set via newContext
+  await context.addInitScript((ua) => {
+    Object.defineProperty(navigator, "userAgent", { get: () => ua });
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+    Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
+    Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+    // Mask headless Chrome signal
+    const origQuery = window.navigator.permissions?.query?.bind(window.navigator.permissions);
+    if (origQuery) {
+      window.navigator.permissions.query = (params) =>
+        params.name === "notifications"
+          ? Promise.resolve({ state: Notification.permission })
+          : origQuery(params);
+    }
+  }, fp.userAgent);
   return { context, page };
 }
 
