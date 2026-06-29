@@ -46,7 +46,7 @@ export function buildAccountsJson({ jobId, mode, stats, accounts }) {
  * - Each account has `email` and `password`
  *
  * @param {string} jsonString
- * @returns {{ valid: boolean, error?: string, data?: object }}
+ * @returns {{ valid: boolean, error?: string, accounts?: object[], stats?: object }}
  */
 export function parseAccountsJson(jsonString) {
   let parsed;
@@ -74,18 +74,33 @@ export function parseAccountsJson(jsonString) {
     }
   }
 
-  return { valid: true, data: parsed };
+  const total = parsed.accounts.length;
+  const suspendedCount = parsed.accounts.filter((a) => a.suspended === true).length;
+  const filteredCount = parsed.accounts.filter((a) => a.reg_status !== "success").length;
+  const eligible = parsed.accounts.filter(
+    (a) => a.reg_status === "success" && a.suspended !== true
+  );
+
+  return {
+    valid: true,
+    accounts: eligible,
+    stats: {
+      total,
+      eligible: eligible.length,
+      suspended: suspendedCount,
+      filtered: filteredCount,
+    },
+  };
 }
 
 /**
- * Filter accounts array to only those eligible for login-only mode.
- * Eligible: reg_status === "success" AND suspended !== true
+ * Build the filename for an accounts.json export.
  *
- * @param {object[]} accounts
- * @returns {object[]}
+ * @param {string} jobId
+ * @returns {string} e.g. "accounts-2026-06-30-abcd1234.json"
  */
-export function filterEligibleAccounts(accounts) {
-  return accounts.filter(
-    (a) => a.reg_status === "success" && a.suspended !== true
-  );
+export function buildAccountsJsonFilename(jobId) {
+  const datePrefix = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const shortId = String(jobId || "").slice(0, 8);
+  return `accounts-${datePrefix}-${shortId}.json`;
 }
