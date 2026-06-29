@@ -1,0 +1,1 @@
+GET /dot-trick with no job returns found:false (verified by static analysis)

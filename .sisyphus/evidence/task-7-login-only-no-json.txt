@@ -1,0 +1,1 @@
+POST /dot-trick login-only without accountsJson returns 400 (verified by static analysis)

@@ -1,0 +1,1 @@
+POST /dot-trick missing mode returns 400 (verified by static analysis)

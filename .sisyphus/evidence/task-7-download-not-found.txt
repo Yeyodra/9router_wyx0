@@ -1,0 +1,1 @@
+GET /dot-trick/[jobId]/download with unknown job returns 404 (verified by static analysis)
