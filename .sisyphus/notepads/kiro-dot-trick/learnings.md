@@ -1,0 +1,76 @@
+# Learnings — kiro-dot-trick
+
+## Project Conventions
+- **JS only** — no TypeScript. Uses `jsconfig.json` path aliases (`@/` → `src/`)
+- **ESM imports** throughout (`import`/`export`)
+- **Singleton pattern** — bulk import managers use `globalThis.__*Singleton` getters
+- **DB path**: `src/lib/db/schema.js` — TABLES object, additive-only via `syncSchemaFromTables()`
+- **DB usage**: `getDb()` from `src/lib/db/index.js`, synchronous better-sqlite3 calls
+- **Repo pattern**: `src/lib/db/repos/connectionsRepo.js` — synchronous INSERT/SELECT/DELETE
+- **Job persistence**: JSON files in `DATA_DIR/kiro-bulk-import/` pattern from `kiroBulkImportManager.js`
+- **Data dir**: `DATA_DIR` from `src/lib/dataDir.js`
+- **randomUUID**: from `node:crypto`
+- **API routes**: `src/app/api/` — Next.js route handlers
+- **OAuth services**: `src/lib/oauth/services/`
+- **Components**: `src/shared/components/`
+- **KiroAutomationPanel**: exists somewhere in `src/shared/components/` or dashboard pages
+
+## Schema Pattern (from schema.js lines 17-151)
+- TABLES object with `columns` and optional `indexes` array
+- No SCHEMA_VERSION bump for additive-only changes
+- `syncSchemaFromTables()` auto-creates new tables on first start
+- New tables go AFTER `proxyPools`, BEFORE `apiKeys`
+
+## kiroBulkImportManager.js Pattern
+- Singleton: `globalThis.__kiroBulkImportManagerSingleton`
+- Job files: `DATA_DIR/kiro-bulk-import/{jobId}.json`
+- Meta file: `DATA_DIR/kiro-bulk-import/meta.json` for latestJobId
+- File writes: atomic via temp file + rename
+- `writeJsonFile` uses `${filePath}.${process.pid}.tmp` → rename pattern
+- Worker pool: `concurrency` param, `KIRO_BULK_IMPORT_DEFAULT_CONCURRENCY = 4`
+- Job statuses: queued → running → success/failed/cancelled/needs_manual
+
+## Existing Kiro Files
+- `src/lib/oauth/services/kiro.js` — KiroService
+- `src/lib/oauth/services/kiroBulkImportManager.js` — bulk import manager (reference pattern)
+- `src/lib/oauth/services/kiroConnections.js`
+- `src/lib/oauth/services/kiroGoogleAutomation.js`
+- `src/shared/components/KiroAuthModal.js`
+- `src/shared/components/KiroOAuthWrapper.js`
+- `src/shared/components/KiroSocialOAuthModal.js`
+
+## Task 1 — kiroGmailCredentials & kiroGmailTokens Tables (2026-06-30)
+- Inserted both tables at lines 74-98 of schema.js, between `proxyPools` and `apiKeys`
+- `kiroGmailCredentials`: 5 columns, no indexes
+- `kiroGmailTokens`: 8 columns, 2 indexes (one plain, one UNIQUE on email)
+- Verification: `node -e "import('./src/lib/db/schema.js').then(...)"` → both `true`
+- Evidence written to `.sisyphus/evidence/task-1-tables-created.txt`
+- SCHEMA_VERSION left at 1 — additive change, `syncSchemaFromTables()` handles auto-create
+
+## kiroGmailTokenService.js � 2026-06-30
+
+### Pattern: getAdapter usage
+- Import: import { getAdapter } from '../../db/driver.js' (from src/lib/oauth/services/)
+- Always: const db = await getAdapter() then use db.run/get/all synchronously (no await)
+- driver.js supports bun:sqlite ? better-sqlite3 ? node:sqlite =22.5 ? sql.js fallback
+
+### deleteCredential � changes() pattern
+- adapter.run() return value is NOT guaranteed to have .changes across all backends
+- Safe pattern: db.run('DELETE ... WHERE id = ?', [id]) then db.get('SELECT changes() AS c') ? .c > 0
+
+### generateGmailDotVariants
+- 'abc@gmail.com' with maxDots=1 ? 3 variants: abc, a.bc, ab.c ? (verified 2026-06-30)
+- New version accepts googlemail.com in addition to gmail.com
+- buildEmailPool now accepts ARRAY of base emails (unlike original script single-email version)
+
+### saveToken upsert pattern
+- No INSERT OR REPLACE used � manual check+insert/update to preserve createdAt on updates
+- expiresAt stored as INTEGER (Unix seconds), isValid = expiresAt > (Date.now()/1000 + 60)
+
+### getCredentials � security
+- Returns only { id, label, clientId, createdAt } � clientSecret excluded
+- getCredentialById(id) returns full record including clientSecret (for refresh use only)
+
+### Evidence
+- .sisyphus/evidence/task-2-exports.txt � all 12 exports confirmed
+- .sisyphus/evidence/task-2-dot-variants.txt � dot variant count = 3 ?

@@ -1,0 +1,1 @@
+﻿buildEmailPool,countDotVariants,deleteCredential,generateGmailDotVariants,getAccessToken,getCredentialById,getCredentials,getGmailAccounts,normalizeGmail,revokeToken,saveCredential,saveToken
