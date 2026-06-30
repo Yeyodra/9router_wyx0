@@ -13,6 +13,7 @@ import {
 } from "@/shared/components";
 import QwenCloudAutomationModal from "@/shared/components/QwenCloudAutomationModal";
 import QwenCloudRegisterModal from "@/shared/components/QwenCloudRegisterModal";
+import KiroDotTrickModal from "@/shared/components/KiroDotTrickModal";
 import { FREE_PROVIDERS } from "@/shared/constants/providers";
 
 function getConnectionLabel(count) {
@@ -23,6 +24,7 @@ function KiroAutomationPanel({ providerInfo, onRefresh }) {
   const [isOpen, setIsOpen] = useState(false);
   const [bulkJob, setBulkJob] = useState(null);
   const [initialFlow, setInitialFlow] = useState(null);
+  const [isDotTrickOpen, setIsDotTrickOpen] = useState(false);
   const openFlow = (flow) => {
     setInitialFlow({ ...flow, key: Date.now() });
     setIsOpen(true);
@@ -71,6 +73,13 @@ function KiroAutomationPanel({ providerInfo, onRefresh }) {
       description: "Open Kiro social Google login with callback capture.",
       action: () => openFlow({ method: "social", provider: "google" }),
     },
+    {
+      id: "dot-trick",
+      title: "Dot Trick",
+      icon: "auto_awesome",
+      description: "Register new Kiro accounts via Gmail dot-variants, then auto-login and save connections.",
+      action: () => setIsDotTrickOpen(true),
+    },
   ];
 
   return (
@@ -117,6 +126,11 @@ function KiroAutomationPanel({ providerInfo, onRefresh }) {
         initialFlow={initialFlow}
         onBulkJobChange={setBulkJob}
         onClose={() => setIsOpen(false)}
+      />
+      <KiroDotTrickModal
+        isOpen={isDotTrickOpen}
+        onClose={() => setIsDotTrickOpen(false)}
+        onSuccess={onRefresh}
       />
     </>
   );

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getKiroDotTrickManager, buildLookupResponse } from "../../../../lib/oauth/services/kiroDotTrickManager.js";
+import { getKiroDotTrickManager } from "../../../../../lib/oauth/services/kiroDotTrickManager.js";
 
 export const dynamic = "force-dynamic";
 

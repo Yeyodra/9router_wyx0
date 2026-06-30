@@ -71,6 +71,31 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_pp_status ON proxyPools(testStatus)",
     ],
   },
+  kiroGmailCredentials: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      label: "TEXT",
+      clientId: "TEXT NOT NULL",
+      clientSecret: "TEXT NOT NULL",
+      createdAt: "TEXT NOT NULL",
+    },
+  },
+  kiroGmailTokens: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      email: "TEXT UNIQUE NOT NULL",
+      accessToken: "TEXT",
+      refreshToken: "TEXT NOT NULL",
+      expiresAt: "INTEGER",
+      credentialId: "TEXT",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_kgt_email ON kiroGmailTokens(email)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_kgt_email_unique ON kiroGmailTokens(email)",
+    ],
+  },
   apiKeys: {
     columns: {
       id: "TEXT PRIMARY KEY",
