@@ -1,6 +1,9 @@
 ﻿import { randomUUID } from "crypto";
 import { KiroBulkImportManager } from "./kiroBulkImportManager.js";
 import { buildEmailPool, getAccessToken, readOtpFromGmail } from "./kiroGmailTokenService.js";
+import { KiroService } from "./kiro.js";
+import { saveKiroOAuthConnection } from "./kiroConnections.js";
+import { KIRO_CONFIG } from "../constants/oauth.js";
 
 // ─── Inline name generator ────────────────────────────────────────────────────
 const FIRST_NAMES = [
@@ -28,41 +31,6 @@ function generatePassword() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// ─── 9router auth helpers (ported from register-and-login-kiro.mjs) ──────────
-const _routerAuthState = { token: null, expiresAt: 0 };
-
-function _getRouterBaseUrl() {
-  const port = process.env.PORT || "20128";
-  return `http://localhost:${port}`;
-}
-
-async function _loginRouter() {
-  const baseUrl = _getRouterBaseUrl();
-  const password = process.env.NINEROUTER_PASSWORD || process.env.INITIAL_PASSWORD || "123456";
-  const resp = await fetch(`${baseUrl}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  });
-  if (!resp.ok) {
-    throw Object.assign(new Error(`9router login failed: ${resp.status}`), { step: "router_login_failed" });
-  }
-  const setCookie = resp.headers.get("set-cookie") || "";
-  const match = setCookie.match(/auth_token=([^;]+)/);
-  if (!match) {
-    throw Object.assign(new Error("auth_token cookie not found in login response"), { step: "router_login_failed" });
-  }
-  _routerAuthState.token = match[1];
-  _routerAuthState.expiresAt = Date.now() + 23 * 60 * 60 * 1000;
-}
-
-async function _getRouterAuthToken() {
-  if (!_routerAuthState.token || Date.now() >= _routerAuthState.expiresAt) {
-    await _loginRouter();
-  }
-  return _routerAuthState.token;
 }
 
 // ─── Slider CAPTCHA helpers ───────────────────────────────────────────────────
@@ -730,29 +698,20 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
       }
 
       // ── LOGIN PHASE — Device Code Flow ───────────────────────────────────────
-      step("login_start", "Starting Device Code login flow");
+      step("login_start", "Starting Device Code login flow — registering OIDC client");
+      const kiroService = new KiroService();
+      const region = "us-east-1";
+      const { clientId, clientSecret } = await kiroService.registerClient(region);
 
-      const _routerToken = await _getRouterAuthToken();
-      const deviceCodeResp = await fetch(`${_getRouterBaseUrl()}/api/oauth/kiro/device-code`, {
-        headers: { Cookie: `auth_token=${_routerToken}` },
-      }).catch((err) => { throw Object.assign(new Error(`device-code API failed: ${err.message}`), { step: "device_code_failed" }); });
+      step("login_device_auth", "Starting device authorization with AWS OIDC");
+      const deviceAuth = await kiroService.startDeviceAuthorization(
+        clientId, clientSecret, KIRO_CONFIG.issuerUrl, region
+      );
 
-      if (!deviceCodeResp.ok) {
-        const body = await deviceCodeResp.text().catch(() => "");
-        throw Object.assign(new Error(`device-code API failed: ${deviceCodeResp.status} ${body}`), { step: "device_code_failed" });
-      }
-
-      const deviceCodeData = await deviceCodeResp.json();
-      const verificationUriComplete = deviceCodeData.verification_uri_complete;
-      const verificationUri = deviceCodeData.verification_uri;
-      const deviceCode = deviceCodeData.device_code;
-      const pollInterval = deviceCodeData.interval || 1;
-      const extraData = {
-        _clientId: deviceCodeData._clientId,
-        _clientSecret: deviceCodeData._clientSecret,
-        _region: deviceCodeData._region || "us-east-1",
-        _authMethod: deviceCodeData._authMethod || "builder-id",
-      };
+      const verificationUriComplete = deviceAuth.verificationUriComplete;
+      const verificationUri = deviceAuth.verificationUri;
+      const deviceCode = deviceAuth.deviceCode;
+      const pollInterval = deviceAuth.interval || 5;
 
       step("login_device_code", `Got device code — navigating to verification URL`);
 
@@ -776,21 +735,14 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
       loginPage = await loginContext.newPage();
       loginPage.setDefaultTimeout(120_000);
 
-      // Start background poll
+      // Start background poll using KiroService directly
       const pollPromise = (async () => {
         const deadline = Date.now() + 600_000;
         while (Date.now() < deadline) {
           await sleep(pollInterval * 1000);
-          const _routerToken2 = await _getRouterAuthToken();
-          const resp = await fetch(`${_getRouterBaseUrl()}/api/oauth/kiro/poll`, {
-            method: "POST",
-            headers: { Cookie: `auth_token=${_routerToken2}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ deviceCode, codeVerifier: "", extraData }),
-          });
-          if (!resp.ok) throw new Error(`poll API error: ${resp.status}`);
-          const result = await resp.json();
+          const result = await kiroService.pollDeviceToken(clientId, clientSecret, deviceCode, region);
           if (result.success) return result;
-          if (result.pending || result.error === "authorization_pending") continue;
+          if (result.pending) continue;
           throw new Error(`poll error: ${result.error || JSON.stringify(result)}`);
         }
         throw new Error("login poll timeout after 10min");
@@ -1065,18 +1017,27 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
       cookieDismissActive = false;
       await cookieDismissLoop;
 
-      // Await poll result (script L1430-1437)
-      step("login_polling", "Waiting for 9router to confirm login (up to 10min)");
+      // Await poll result
+      step("login_polling", "Waiting for AWS OIDC device token (up to 10min)");
       const pollResult = await pollPromise;
       if (!pollResult?.success) {
         throw Object.assign(new Error("Login poll did not return success"), { step: "login_poll_failed" });
       }
 
-      const connectionId = pollResult.connection?.id || pollResult.connectionId || null;
-      step("login_success", `Login successful — connection: ${connectionId}`);
+      // Save connection using kiroConnections.js
+      step("login_saving_connection", "Saving Kiro connection to database");
+      const connection = await saveKiroOAuthConnection({
+        accessToken: pollResult.tokens.accessToken,
+        refreshToken: pollResult.tokens.refreshToken,
+        expiresIn: pollResult.tokens.expiresIn,
+        profileArn: null,
+        authMethod: "builder-id",
+        providerLabel: "Builder ID",
+      });
 
+      step("login_success", `Login successful — connection: ${connection.id}`);
       this.finalizeAccount(account, "success", {
-        connectionId,
+        connectionId: connection.id,
         step: "connection_saved",
         message: `Kiro connection saved (${account.email})`,
       });
