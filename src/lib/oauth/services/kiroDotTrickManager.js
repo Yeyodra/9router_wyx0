@@ -834,15 +834,15 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         '#email',
         'input[placeholder*="email" i]',
       ];
-      let emailFilled = false;
+      let loginEmailFilled = false;
       for (const sel of loginEmailSelectors) {
         try {
           await loginPage.locator(sel).first().fill(account.email, { timeout: 5_000 });
-          emailFilled = true;
+          loginEmailFilled = true;
           break;
         } catch { /* try next */ }
       }
-      if (!emailFilled) throw Object.assign(new Error("Could not find email input field"), { step: "login_email_not_found" });
+      if (!loginEmailFilled) throw Object.assign(new Error("Could not find email input field"), { step: "login_email_not_found" });
 
       // Click Continue/Next after email
       const loginNextSelectors = [
