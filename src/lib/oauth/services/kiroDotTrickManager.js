@@ -705,7 +705,7 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
 
       step("login_device_auth", "Starting device authorization with AWS OIDC");
       const deviceAuth = await kiroService.startDeviceAuthorization(
-        clientId, clientSecret, KIRO_CONFIG.issuerUrl, region
+        clientId, clientSecret, KIRO_CONFIG.startUrl, region
       );
 
       const verificationUriComplete = deviceAuth.verificationUriComplete;
