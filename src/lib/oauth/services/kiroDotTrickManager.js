@@ -30,6 +30,40 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ─── 9router auth helpers (ported from register-and-login-kiro.mjs) ──────────
+const _routerAuthState = { token: null, expiresAt: 0 };
+
+function _getRouterBaseUrl() {
+  const port = process.env.PORT || "20128";
+  return `http://localhost:${port}`;
+}
+
+async function _loginRouter() {
+  const baseUrl = _getRouterBaseUrl();
+  const password = process.env.NINEROUTER_PASSWORD || process.env.INITIAL_PASSWORD || "123456";
+  const resp = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!resp.ok) {
+    throw Object.assign(new Error(`9router login failed: ${resp.status}`), { step: "router_login_failed" });
+  }
+  const setCookie = resp.headers.get("set-cookie") || "";
+  const match = setCookie.match(/auth_token=([^;]+)/);
+  if (!match) {
+    throw Object.assign(new Error("auth_token cookie not found in login response"), { step: "router_login_failed" });
+  }
+  _routerAuthState.token = match[1];
+  _routerAuthState.expiresAt = Date.now() + 23 * 60 * 60 * 1000;
+}
+
+async function _getRouterAuthToken() {
+  if (!_routerAuthState.token || Date.now() >= _routerAuthState.expiresAt) {
+    await _loginRouter();
+  }
+  return _routerAuthState.token;
+}
 
 // ─── Slider CAPTCHA helpers ───────────────────────────────────────────────────
 const SLIDER_CONTAINER_SEL = [
@@ -698,8 +732,9 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
       // ── LOGIN PHASE — Device Code Flow ───────────────────────────────────────
       step("login_start", "Starting Device Code login flow");
 
-      const deviceCodeResp = await fetch("http://localhost:20128/api/oauth/kiro/device-code", {
-        headers: { "x-internal-request": "1" },
+      const _routerToken = await _getRouterAuthToken();
+      const deviceCodeResp = await fetch(`${_getRouterBaseUrl()}/api/oauth/kiro/device-code`, {
+        headers: { Cookie: `auth_token=${_routerToken}` },
       }).catch((err) => { throw Object.assign(new Error(`device-code API failed: ${err.message}`), { step: "device_code_failed" }); });
 
       if (!deviceCodeResp.ok) {
@@ -721,14 +756,35 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
 
       step("login_device_code", `Got device code — navigating to verification URL`);
 
+      // ── Launch a SEPARATE browser for login (mirrors script L1138-1141)
+      let loginBrowser;
+      let loginContext;
+      let loginPage;
+
+      loginBrowser = await launchBulkImportBrowser({
+        engine: job.engine || "chromium",
+        headless: job.headless !== false,
+        proxyUrl,
+      });
+      job.workerBrowsers.add(loginBrowser);
+
+      if ((job.engine || "chromium") === "camoufox") {
+        loginContext = await loginBrowser.newContext();
+      } else {
+        loginContext = await loginBrowser.newContext({ viewport: { width: 1440, height: 900 } });
+      }
+      loginPage = await loginContext.newPage();
+      loginPage.setDefaultTimeout(120_000);
+
       // Start background poll
       const pollPromise = (async () => {
         const deadline = Date.now() + 600_000;
         while (Date.now() < deadline) {
           await sleep(pollInterval * 1000);
-          const resp = await fetch("http://localhost:20128/api/oauth/kiro/poll", {
+          const _routerToken2 = await _getRouterAuthToken();
+          const resp = await fetch(`${_getRouterBaseUrl()}/api/oauth/kiro/poll`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "x-internal-request": "1" },
+            headers: { Cookie: `auth_token=${_routerToken2}`, "Content-Type": "application/json" },
             body: JSON.stringify({ deviceCode, codeVerifier: "", extraData }),
           });
           if (!resp.ok) throw new Error(`poll API error: ${resp.status}`);
@@ -740,73 +796,138 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         throw new Error("login poll timeout after 10min");
       })();
 
-      // Navigate to verificationUriComplete
-      await page.goto(verificationUriComplete || verificationUri, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      // ── Continuous cookie consent dismisser (script L1143-1164)
+      const loginCookieSelectors = [
+        '[data-id="awsccc-cb-btn-accept"]',
+        'button[data-id*="accept" i]',
+        '#awsccc-cb-btn-accept',
+      ];
+      let cookieDismissActive = true;
+      const cookieDismissLoop = (async () => {
+        while (cookieDismissActive) {
+          try {
+            for (const sel of loginCookieSelectors) {
+              const el = loginPage.locator(sel).first();
+              if (await el.isVisible({ timeout: 400 }).catch(() => false)) {
+                await el.click({ timeout: 2_000 }).catch(() => null);
+                step("login_cookie_dismissed", "Dismissed cookie consent popup");
+              }
+            }
+          } catch { /* ignore */ }
+          await sleep(1_500);
+        }
+      })();
+
+      // Navigate to the device verification URL (script L1166-1171)
+      step("login_navigating", "Navigating to verification URL");
+      await loginPage.goto(verificationUriComplete || verificationUri, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
       await sleep(2_000);
 
-      // Fill email on verification page if shown
-      step("login_filling_email", "Filling email on verification page if needed");
+      // ── Step 3a: Enter email (script L1173-1217)
+      step("login_filling_email", "Filling email on verification page");
       const loginEmailSelectors = [
         'input[name="email"]',
         'input[type="email"]',
         '#email',
         'input[placeholder*="email" i]',
       ];
+      let emailFilled = false;
       for (const sel of loginEmailSelectors) {
         try {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 3_000 }).catch(() => false)) {
-            await el.fill(account.email);
-            for (const nsel of [
-              'button:has-text("Continue")',
-              'button:has-text("Next")',
-              'button:has-text("Get started")',
-              'button:has-text("Sign in")',
-              'button[type="submit"]',
-              'input[type="submit"]',
-              '#next_button',
-            ]) {
-              try {
-                const nb = page.locator(nsel).first();
-                if (await nb.isVisible({ timeout: 2_000 }).catch(() => false)) { await nb.click({ timeout: 5_000 }); break; }
-              } catch { /* try next */ }
-            }
-            await sleep(3_000);
-            break;
-          }
+          await loginPage.locator(sel).first().fill(account.email, { timeout: 5_000 });
+          emailFilled = true;
+          break;
         } catch { /* try next */ }
       }
+      if (!emailFilled) throw Object.assign(new Error("Could not find email input field"), { step: "login_email_not_found" });
 
-      // Fill password on verification page if shown
-      step("login_filling_password", "Filling password on verification page if needed");
-      const loginPwSelectors = ['input[name="password"]', 'input[type="password"]', '#password'];
-      for (const sel of loginPwSelectors) {
+      // Click Continue/Next after email
+      const loginNextSelectors = [
+        'button:has-text("Continue")',
+        'button:has-text("Next")',
+        'button:has-text("Get started")',
+        'button:has-text("Sign in")',
+        'button[type="submit"]',
+        'input[type="submit"]',
+        '#next_button',
+      ];
+      let nextClicked = false;
+      for (let attempt = 0; attempt < 10 && !nextClicked; attempt++) {
+        for (const sel of loginNextSelectors) {
+          try {
+            const el = loginPage.locator(sel).first();
+            if (await el.isVisible({ timeout: 1_500 }).catch(() => false)) {
+              await el.click({ timeout: 5_000 });
+              nextClicked = true;
+              break;
+            }
+          } catch { /* try next */ }
+        }
+        if (!nextClicked) await sleep(1_000);
+      }
+      if (!nextClicked) throw Object.assign(new Error("Could not find Next/Continue button after email"), { step: "login_next_not_found" });
+
+      await loginPage.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => null);
+      await sleep(2_500);
+
+      // ── Step 3c: Enter password (script L1222-1277)
+      step("login_filling_password", "Waiting for password field");
+      const loginPwSelectors = [
+        'input[name="password"]',
+        'input[type="password"]',
+        '#password',
+      ];
+      let passwordFilled = false;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        for (const sel of loginPwSelectors) {
+          try {
+            const el = loginPage.locator(sel).first();
+            if (await el.isVisible({ timeout: 1_500 }).catch(() => false)) {
+              await el.click();
+              await sleep(200);
+              await el.fill(account.password);
+              passwordFilled = true;
+              break;
+            }
+          } catch { /* try next */ }
+        }
+        if (passwordFilled) break;
+        await sleep(1_000);
+      }
+      if (!passwordFilled) throw Object.assign(new Error("Could not find password input field after 20s"), { step: "login_password_not_found" });
+
+      const loginSignInSelectors = [
+        'button:has-text("Sign in")',
+        'button:has-text("Submit")',
+        'button:has-text("Continue")',
+        'button:has-text("Next")',
+        'button[type="submit"]',
+        'input[type="submit"]',
+      ];
+      step("login_submitting_password", "Submitting password");
+      let signInClicked = false;
+      for (const sel of loginSignInSelectors) {
         try {
-          const el = page.locator(sel).first();
+          const el = loginPage.locator(sel).first();
           if (await el.isVisible({ timeout: 3_000 }).catch(() => false)) {
-            await el.click();
-            await sleep(200);
-            await el.fill(account.password);
-            for (const nsel of [
-              'button:has-text("Sign in")',
-              'button:has-text("Submit")',
-              'button:has-text("Continue")',
-              'button:has-text("Next")',
-              'button[type="submit"]',
-              'input[type="submit"]',
-            ]) {
-              try {
-                const nb = page.locator(nsel).first();
-                if (await nb.isVisible({ timeout: 2_000 }).catch(() => false)) { await nb.click({ timeout: 5_000 }); break; }
-              } catch { /* try next */ }
-            }
-            await sleep(3_000);
+            await el.click({ timeout: 5_000 });
+            signInClicked = true;
             break;
           }
         } catch { /* try next */ }
       }
+      if (!signInClicked) {
+        try {
+          await loginPage.locator('input[type="password"]').first().press("Enter");
+        } catch { /* ignore */ }
+      }
+      await loginPage.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => null);
+      await sleep(2_000);
 
-      // ── Consent/Allow selectors — declared BEFORE OTP phase to avoid hoisting error
+      // ── Consent/Allow selectors — declared BEFORE OTP phase to avoid hoisting error (script L1279-1290)
       const allowSelectors = [
         '[data-testid="allow-access-button"]',
         '#cli_verification_btn',
@@ -819,7 +940,7 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         'input[type="submit"][value*="Allow" i]',
       ];
 
-      // ── OTP "Verify your identity" — appears AFTER password on some accounts
+      // ── Step 3d: OTP "Verify your identity" — appears AFTER password on some accounts (script L1292-1370)
       step("login_otp_check", "Checking for OTP field after password (up to 30s)");
       const loginOtpSentAt = new Date();
       let otpFieldVisible = false;
@@ -837,7 +958,7 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
       // Poll up to 30s for OTP field
       for (let i = 0; i < 20; i++) {
         for (const sel of otpSelectors) {
-          if (await page.locator(sel).first().isVisible({ timeout: 1_000 }).catch(() => false)) {
+          if (await loginPage.locator(sel).first().isVisible({ timeout: 1_000 }).catch(() => false)) {
             otpFieldVisible = true;
             step("login_otp_found", `OTP field found after password: ${sel}`);
             break;
@@ -847,7 +968,7 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         // Also check if consent page already appeared — skip OTP check
         let consentVisible = false;
         for (const sel of allowSelectors) {
-          if (await page.locator(sel).first().isVisible({ timeout: 500 }).catch(() => false)) {
+          if (await loginPage.locator(sel).first().isVisible({ timeout: 500 }).catch(() => false)) {
             consentVisible = true;
             break;
           }
@@ -865,11 +986,11 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         // Fill OTP
         for (const sel of otpSelectors) {
           try {
-            const el = page.locator(sel).first();
+            const el = loginPage.locator(sel).first();
             if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
               await el.click();
               await sleep(200);
-              for (const ch of otp) await page.keyboard.type(ch, { delay: 35 });
+              for (const ch of otp) await loginPage.keyboard.type(ch, { delay: 35 });
               break;
             }
           } catch { /* try next */ }
@@ -879,7 +1000,7 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         // Submit OTP
         for (const sel of ['button:has-text("Continue")', 'button:has-text("Submit")', 'button:has-text("Verify")', 'button[type="submit"]']) {
           try {
-            const el = page.locator(sel).first();
+            const el = loginPage.locator(sel).first();
             if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) {
               await el.click({ timeout: 5_000 });
               step("login_otp_submitted", `OTP submitted via: ${sel}`);
@@ -890,12 +1011,12 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         await sleep(3_000);
       }
 
-      // ── Consent/Allow pages (up to 180s)
+      // ── Step 3e: Consent/Allow pages (up to 180s) (script L1372-1426)
       step("login_allow_access", "Waiting for consent/allow pages (up to 180s)");
 
       const isSuccessPage = async () => {
         try {
-          return await page.evaluate(() => {
+          return await loginPage.evaluate(() => {
             const text = (document.body?.innerText || "").toLowerCase();
             return (
               text.includes("request approved") ||
@@ -911,15 +1032,15 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
       };
 
       // 120 iterations x 1.5s = 180s
-      for (let attempt = 0; attempt < 120; attempt++) {
+      for (let i = 0; i < 120; i++) {
         if (await isSuccessPage()) {
-          step("login_success_page", `Success page detected at iteration ${attempt + 1}`);
+          step("login_success_page", `Success page detected at iteration ${i + 1}`);
           break;
         }
         let clicked = false;
         for (const sel of allowSelectors) {
           try {
-            const el = page.locator(sel).first();
+            const el = loginPage.locator(sel).first();
             if (await el.isVisible({ timeout: 1_000 }).catch(() => false)) {
               await el.click({ timeout: 5_000 });
               step("allow_clicked", `Clicked consent: ${sel}`);
@@ -930,7 +1051,7 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
           } catch { /* try next */ }
         }
         if (!clicked) {
-          if (attempt % 10 === 9) step("login_consent_wait", `Consent wait ${attempt + 1}/120 — url=${page.url().slice(0, 80)}`);
+          if (i % 10 === 9) step("login_consent_wait", `Consent wait ${i + 1}/120 — url=${loginPage.url().slice(0, 80)}`);
           await sleep(1_500);
         }
       }
@@ -940,7 +1061,11 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
         step("allow_not_found", "Success page not detected — poll may still succeed", "warn");
       }
 
-      // Await poll result
+      // Stop cookie dismisser (script L1428-1429)
+      cookieDismissActive = false;
+      await cookieDismissLoop;
+
+      // Await poll result (script L1430-1437)
       step("login_polling", "Waiting for 9router to confirm login (up to 10min)");
       const pollResult = await pollPromise;
       if (!pollResult?.success) {
@@ -970,6 +1095,13 @@ export class KiroDotTrickManager extends KiroBulkImportManager {
       await this.persistJobSnapshot(job, { forcePreview: true });
     } finally {
       account.runtimeSession = null;
+      // Close login browser if it was launched
+      if (loginBrowser) {
+        try { await loginContext?.close(); } catch { /* ignore */ }
+        job.workerBrowsers.delete(loginBrowser);
+        try { await loginBrowser.close(); } catch { /* ignore */ }
+      }
+      // Close register browser
       try { await context.close(); } catch { /* ignore */ }
       job.workerBrowsers.delete(browser);
       try { await browser.close(); } catch { /* ignore */ }
