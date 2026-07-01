@@ -148,8 +148,13 @@ async function launchChromium({ proxyUrl, headless = true, args = [] } = {}) {
     }
     chromium = installedRuntimePlaywright.chromium;
   }
-  const options = { headless };
-  if (args.length) options.args = args;
+  const defaultArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",
+  ];
+  const options = { headless, args: [...defaultArgs, ...args] };
   const proxy = buildBrowserProxyOption(proxyUrl);
   if (proxy) options.proxy = proxy;
   return chromium.launch(options);

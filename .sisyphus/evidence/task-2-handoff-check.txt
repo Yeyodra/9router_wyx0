@@ -1,0 +1,42 @@
+## task-2 verification — 2026-06-25
+
+### 1. grep "relatedUserId" QWEN_CLOUD_HANDOFF.md → MATCH
+212:               "relatedUserId":"<login_aliyunid_pk cookie value>"
+343:  // Extract relatedUserId from login_aliyunid_pk cookie
+344:  const relatedUserId = cookies.find(c => c.name === 'login_aliyunid_pk')?.value;
+359:          relatedUserId   // ← REQUIRED: login_aliyunid_pk cookie value
+
+### 2. grep "switchAgent" QWEN_CLOUD_HANDOFF.md → MATCH
+221:               "switchAgent":<tenantId from listWorkspaces4Agent>,
+363:          switchAgent: tenantId  // ← tenantId from listWorkspaces4Agent (replaces switchAgentType)
+
+### 3. grep "switchAgentType" QWEN_CLOUD_HANDOFF.md → ONLY IN COMMENT (not a param)
+363:          switchAgent: tenantId  // ← tenantId from listWorkspaces4Agent (replaces switchAgentType)
+  → No occurrence as an actual param key. PASS.
+
+### 4. grep "initSpace" QWEN_CLOUD_HANDOFF.md → MATCH
+135:  &api=zeldaEasy.bailian-dash-workspace.space.initSpace
+143:  &params={"Api":"zeldaEasy.bailian-dash-workspace.space.initSpace",
+315:  const initSpaceName = 'zeldaEasy.bailian-dash-workspace.space.initSpace';
+316:  await fetch(`${BASE_URL}&api=${initSpaceName}`, {
+324:      params: JSON.stringify({ Api: initSpaceName, V: '1.0', ...
+
+### 5. grep "listWorkspaces" QWEN_CLOUD_HANDOFF.md → MATCH
+164:  &api=zeldaEasy.bailian-dash-workspace.space.listWorkspaces4Agent
+172:  &params={"Api":"zeldaEasy.bailian-dash-workspace.space.listWorkspaces4Agent",
+221:               "switchAgent":<tenantId from listWorkspaces4Agent>,
+329:  const listWsName = 'zeldaEasy.bailian-dash-workspace.space.listWorkspaces4Agent';
+363:          switchAgent: tenantId  // ← tenantId from listWorkspaces4Agent (replaces switchAgentType)
+
+### 6. grep V:"1.0" QWEN_CLOUD_HANDOFF.md → MATCH
+144:           "V":"1.0",
+173:           "V":"1.0",
+208:           "V":"1.0",
+324:      params: JSON.stringify({ Api: initSpaceName, V: '1.0', ...
+338:      params: JSON.stringify({ Api: listWsName, V: '1.0', ...
+355:      V: '1.0',
+
+### 7. grep AUTOMATION_PROVIDERS|qwen_cloud providers.js → MATCH
+168:export const AUTOMATION_PROVIDERS = ["qoder", "codebuddy", "qwen_cloud"];
+
+### RESULT: ALL CHECKS PASS ✅

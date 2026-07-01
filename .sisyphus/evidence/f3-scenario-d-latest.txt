@@ -1,0 +1,3 @@
+STATUS: 200
+BODY: {"found":true,"job":{"jobId":"9b158ec3-0c82-40b7-b981-f2debd6982d1","status":"running",...}}
+RESULT: PASS - found:true with active job data

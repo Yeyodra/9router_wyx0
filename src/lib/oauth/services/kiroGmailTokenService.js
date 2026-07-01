@@ -238,6 +238,114 @@ export function buildEmailPool(baseEmails, maxDots = 2) {
   return all;
 }
 
+// ---------------------------------------------------------------------------
+// Gmail API OTP reader
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract a MIME part by type from a Gmail message payload (recursive).
+ * @param {object} payload
+ * @param {string} mime
+ * @returns {string}
+ */
+function _extractPart(payload, mime) {
+  if (payload.mimeType === mime && payload.body?.data) {
+    return Buffer.from(payload.body.data, "base64url").toString("utf8");
+  }
+  for (const p of payload.parts || []) {
+    const t = _extractPart(p, mime);
+    if (t) return t;
+  }
+  return "";
+}
+
+/**
+ * Poll Gmail API for an AWS Builder ID OTP email and return the 6-digit code.
+ * Uses getAccessToken(email) for auth (auto-refreshes from SQLite).
+ *
+ * @param {string} email  - The Gmail address to check (dot-variant or base)
+ * @param {{ timeout?: number, since?: string|null }} options
+ *   timeout — max wait in ms (default 120_000)
+ *   since   — ISO timestamp; only messages newer than (since - 30s) are considered
+ * @returns {Promise<string|null>}  6-digit OTP or null on timeout
+ */
+export async function readOtpFromGmail(email, { timeout = 120_000, since = null } = {}) {
+  const normalizedEmail = normalizeGmail(email);
+  const deadline = Date.now() + timeout;
+  let pollCount = 0;
+  let lastSeenIds = new Set();
+
+  // AWS Builder ID OTP comes from both domains depending on flow type
+  const q = encodeURIComponent("from:no-reply@login.awsapps.com OR from:no-reply@signin.aws");
+  const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${q}&maxResults=10`;
+
+  while (Date.now() < deadline) {
+    pollCount++;
+    try {
+      const token = await getAccessToken(normalizedEmail);
+      const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (listRes.status === 429) { await new Promise(r => setTimeout(r, 5_000)); continue; }
+      if (!listRes.ok) { await new Promise(r => setTimeout(r, 2_000)); continue; }
+
+      const { messages = [] } = await listRes.json();
+
+      // sinceMs: 30s before OTP trigger to catch delayed delivery
+      const sinceMs = since ? new Date(since).getTime() - 30_000 : Date.now() - 60_000;
+
+      for (const m of messages) {
+        if (lastSeenIds.has(m.id)) continue;
+        const msgRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!msgRes.ok) continue;
+        const msg = await msgRes.json();
+
+        const msgDate = parseInt(msg.internalDate || "0");
+        if (msgDate < sinceMs) {
+          lastSeenIds.add(m.id);
+          continue;
+        }
+
+        const headers = Object.fromEntries(
+          (msg.payload?.headers || []).map(h => [h.name.toLowerCase(), h.value])
+        );
+        const from = headers["from"] || "";
+
+        // Confirm sender is AWS
+        if (!from.includes("signin.aws") && !from.includes("login.awsapps.com")) {
+          lastSeenIds.add(m.id);
+          continue;
+        }
+
+        // Extract body (prefer plain text, fall back to HTML)
+        const textBody = _extractPart(msg.payload, "text/plain");
+        const htmlBody = _extractPart(msg.payload, "text/html");
+        const combined = textBody || htmlBody;
+
+        // Match 6-digit OTP — multiple patterns for resilience
+        const match =
+          combined.match(/\b(\d{6})\b/) ||
+          combined.match(/verification code[^\d]*(\d{6})/i) ||
+          combined.match(/one.time[^\d]*(\d{6})/i) ||
+          combined.match(/verification code\b[\s\S]{0,200}?(\d{6})/i);
+
+        if (match) {
+          return match[1];
+        }
+
+        lastSeenIds.add(m.id);
+      }
+    } catch (_err) {
+      // transient error — keep polling
+    }
+
+    await new Promise(r => setTimeout(r, 3_000));
+  }
+
+  return null; // timeout
+}
+
 /**
  * Count how many dot variants exist for a given email with the given maxDots.
  * @param {string} email

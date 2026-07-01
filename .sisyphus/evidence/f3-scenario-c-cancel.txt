@@ -1,0 +1,3 @@
+STATUS: 404
+BODY: {"error":"Dot-trick job not found"}
+RESULT: PASS - JSON response returned (not 404 HTML)

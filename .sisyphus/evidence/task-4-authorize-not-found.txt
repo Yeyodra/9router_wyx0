@@ -1,0 +1,22 @@
+﻿Task 4 — gmail-authorize: credential not found (404 test)
+Date: 2026-06-30 04:04:39
+
+FILE: src/app/api/oauth/kiro/gmail-authorize/route.js
+
+DEV SERVER STATUS: Running on :20128 but protected by auth middleware (401).
+Static code analysis confirms correct 404 branch:
+
+  const credential = await getCredentialById(credentialId);
+  if (!credential) {
+    return NextResponse.json(
+      { error: "Credential not found" },
+      { status: 404 }
+    );
+  }
+
+RESULT: When GET /api/oauth/kiro/gmail-authorize?credential_id=nonexistent is
+        called with a credential_id that does not exist in kiroGmailCredentials,
+        getCredentialById() returns null and the handler returns HTTP 404 with:
+        { "error": "Credential not found" }
+
+VERIFICATION METHOD: Static code review (server auth blocks unauthenticated curl).

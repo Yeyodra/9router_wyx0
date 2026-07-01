@@ -1,40 +1,34 @@
-import { getKiroDotTrickManager } from "../../../../../../lib/oauth/services/kiroDotTrickManager.js";
+﻿import { NextResponse } from "next/server";
+import { getKiroDotTrickManager } from "../../../../../../../lib/oauth/services/kiroDotTrickManager.js";
+import { buildAccountsJsonFilename } from "../../../../../../../lib/oauth/services/kiroDotTrickAccountsSchema.js";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request, { params }) {
-  const { jobId } = await params;
+export async function GET(_request, { params }) {
   const manager = getKiroDotTrickManager();
 
-  // Check job exists
-  const jobResult = manager.getJobWithPreview(jobId);
-  if (!jobResult) {
-    return new Response(JSON.stringify({ error: "Job not found" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+  // Get the job first to check mode and existence
+  const job = await manager.getJobWithPreview(params.jobId);
+  if (!job) {
+    return NextResponse.json({ error: "Dot-trick job not found" }, { status: 404 });
   }
 
-  if (jobResult.mode === "login-only") {
-    return new Response(JSON.stringify({ error: "accounts.json download not available for login-only jobs" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+  if (job.mode === "login-only") {
+    return NextResponse.json({ error: "No accounts.json available for login-only jobs" }, { status: 400 });
   }
 
-  const result = manager.getAccountsJson(jobId);
+  const result = manager.getAccountsJson(params.jobId);
   if (!result) {
-    return new Response(JSON.stringify({ error: "No accounts.json available for this job" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+    return NextResponse.json({ error: "accounts.json not available for this job" }, { status: 404 });
   }
+
+  const filename = buildAccountsJsonFilename(params.jobId);
 
   return new Response(result.json, {
     status: 200,
     headers: {
       "Content-Type": "application/json",
-      "Content-Disposition": `attachment; filename="${result.filename}"`,
+      "Content-Disposition": `attachment; filename="${filename}"`,
     },
   });
 }

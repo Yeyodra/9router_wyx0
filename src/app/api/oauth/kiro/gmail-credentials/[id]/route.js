@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
-import { deleteCredential, getCredentialById, revokeToken, getGmailAccounts } from "../../../../../../lib/oauth/services/kiroGmailTokenService.js";
+﻿import { NextResponse } from "next/server";
+import { getCredentialById, deleteCredential } from "../../../../../../lib/oauth/services/kiroGmailTokenService.js";
+import { getAdapter } from "../../../../../../lib/db/driver.js";
 
 export const dynamic = "force-dynamic";
 
-export async function DELETE(request, { params }) {
-  const { id } = await params;
+export async function DELETE(_request, { params }) {
+  const { id } = params;
 
   // Check credential exists
   const existing = await getCredentialById(id);
@@ -12,14 +13,12 @@ export async function DELETE(request, { params }) {
     return NextResponse.json({ error: "Credential not found" }, { status: 404 });
   }
 
-  // Revoke all associated gmail tokens (credentialId FK cleanup)
-  const accounts = await getGmailAccounts();
-  for (const account of accounts) {
-    if (account.credentialId === id) {
-      await revokeToken(account.email);
-    }
-  }
+  // Delete associated gmail tokens first (FK cleanup)
+  const db = await getAdapter();
+  db.run(`DELETE FROM kiroGmailTokens WHERE credentialId = ?`, [id]);
 
+  // Delete credential itself
   await deleteCredential(id);
+
   return NextResponse.json({ success: true });
 }

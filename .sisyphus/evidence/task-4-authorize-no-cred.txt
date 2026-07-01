@@ -1,0 +1,21 @@
+﻿Task 4 — gmail-authorize: missing credential_id (400 test)
+Date: 2026-06-30 04:04:39
+
+FILE: src/app/api/oauth/kiro/gmail-authorize/route.js
+
+DEV SERVER STATUS: Running on :20128 but protected by auth middleware (401).
+Static code analysis confirms correct 400 branch:
+
+  const credentialId = searchParams.get("credential_id");
+  if (!credentialId) {
+    return NextResponse.json(
+      { error: "credential_id is required" },
+      { status: 400 }
+    );
+  }
+
+RESULT: When GET /api/oauth/kiro/gmail-authorize is called with no credential_id
+        param, the handler returns HTTP 400 with body:
+        { "error": "credential_id is required" }
+
+VERIFICATION METHOD: Static code review (server auth blocks unauthenticated curl).

@@ -71,23 +71,34 @@ export async function GET(request) {
 
   const tokens = await tokenResp.json();
 
-  // 5. Decode email from id_token (middle segment of JWT, base64url-encoded JSON)
-  let email;
+  // 5. Get email from Google userinfo endpoint (works for all OAuth types,
+  //    including installed apps that may not return id_token).
+  let userinfoResp;
   try {
-    const payload = JSON.parse(
-      Buffer.from(tokens.id_token.split(".")[1], "base64url").toString()
-    );
-    email = payload.email;
-  } catch {
+    userinfoResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+  } catch (err) {
     return NextResponse.json(
-      { error: "Could not decode email from id_token" },
+      { error: `Userinfo request failed: ${err.message}` },
       { status: 502 }
     );
   }
 
+  if (!userinfoResp.ok) {
+    const body = await userinfoResp.text();
+    return NextResponse.json(
+      { error: `Failed to get user info from Google: ${userinfoResp.status} ${body}` },
+      { status: 502 }
+    );
+  }
+
+  const userinfo = await userinfoResp.json();
+  const email = userinfo.email;
+
   if (!email) {
     return NextResponse.json(
-      { error: "id_token payload missing email claim" },
+      { error: "Google userinfo missing email claim" },
       { status: 502 }
     );
   }

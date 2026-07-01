@@ -1,0 +1,13 @@
+﻿node : (node:24868) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of 
+file:///C:/Users/Nazril/Documents/Projek/Github/9router_wyx0/src/lib/db/schema.js is not specified and it doesn't 
+parse as CommonJS.
+At line:1 char:1
++ node -e "import('./src/lib/db/schema.js').then(m => { const t = m.TAB ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ((node:24868) [M...se as CommonJS.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to C:\Users\Nazril\Documents\Projek\Github\9router_wyx0\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+kiroGmailCredentials: true | kiroGmailTokens: true

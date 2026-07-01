@@ -1,12 +1,16 @@
-import { NextResponse } from "next/server";
-import { getKiroDotTrickManager } from "../../../../../lib/oauth/services/kiroDotTrickManager.js";
+﻿import { NextResponse } from "next/server";
+import { getKiroDotTrickManager } from "../../../../../../lib/oauth/services/kiroDotTrickManager.js";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request, { params }) {
+export async function GET(_request, { params }) {
   const { jobId } = await params;
   const manager = getKiroDotTrickManager();
-  const result = manager.getJobWithPreview(jobId);
-  if (!result) return NextResponse.json({ found: false, stale: true });
-  return NextResponse.json({ found: true, job: result });
+  const job = await manager.getJobWithPreview(jobId);
+
+  if (!job) {
+    return NextResponse.json({ error: "Dot-trick job not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({ success: true, job });
 }

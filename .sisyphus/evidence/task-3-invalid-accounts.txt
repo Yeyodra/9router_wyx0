@@ -1,0 +1,4 @@
+Test: startJob rejects login-only with invalid JSON
+Command: node -e "...startJob({mode:'login-only',gmailAccounts:[],accountsJson:'invalid json'}).catch(e=>console.log('error:',e.message))"
+Result: error: Invalid JSON: Unexpected token 'i', "invalid json" is not valid JSON
+Date: 2026-06-30 04:13:05

@@ -1,0 +1,4 @@
+Test: getAccountsJson('nonexistent-uuid') returns null
+Command: node -e "...console.log(m.getAccountsJson('nonexistent-uuid'))"
+Result: null
+Date: 2026-06-30 04:13:05

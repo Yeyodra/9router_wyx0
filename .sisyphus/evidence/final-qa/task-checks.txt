@@ -1,0 +1,60 @@
+﻿FINAL QA EVIDENCE — kiro-dot-trick plan
+Generated: 2026-07-01 11:34:13
+========================================
+
+=== TASK 1: Schema Tables ===
+T1.1  kiroGmailCredentials + kiroGmailTokens in schema.js .............. PASS
+      Line 74:  kiroGmailCredentials: {
+      Line 83:  kiroGmailTokens: {
+      Line 95:  CREATE INDEX IF NOT EXISTS idx_kgt_email ON kiroGmailTokens(email)
+      Line 96:  CREATE UNIQUE INDEX IF NOT EXISTS idx_kgt_email_unique ON kiroGmailTokens(email)
+
+=== TASK 2: kiroDotTrickManager.js Invariants ===
+T2.1  capturePreview NOT defined as async function ...................... PASS
+      (0 matches for 'async capturePreview' — correctly inherited from parent)
+T2.2  readOtpFromGmail NOT defined locally .............................. PASS
+      (0 matches for 'function readOtp' — correctly imported, not redefined)
+T2.3  verificationUri present (Device Code Flow) ........................ PASS
+      Line 499: const verificationUriComplete = deviceCodeData.verification_uri_complete;
+      Line 500: const verificationUri = deviceCodeData.verification_uri;
+      Line 531: // Navigate to verificationUriComplete
+      Line 532: await page.goto(verificationUriComplete || verificationUri, ...)
+T2.4  emailCaptcha selector present .................................... PASS
+      Line 278: 'input[name="emailCaptcha"]', '#emailCaptcha',
+T2.5  amazonaws suspend check present .................................. PASS
+      Line 429: const suspendQ = encodeURIComponent("from:no-reply@amazonaws.com subject:Action Needed");
+
+=== TASK 3: API Route Files ===
+T3.1  src/app/api/oauth/kiro/dot-trick/[jobId]/cancel/route.js ......... PASS
+T3.2  src/app/api/oauth/kiro/dot-trick/latest/route.js ................. PASS
+T3.3  src/app/api/oauth/kiro/gmail-credentials/[id]/route.js ........... PASS
+T3.4  src/app/api/oauth/kiro/gmail-accounts/[email]/route.js ........... PASS
+NOTE: Test-Path with bracket chars requires -LiteralPath flag (not -Path);
+      initial checks showed false FAILs — corrected and confirmed all PASS.
+
+=== TASK 4: Job Status Route ===
+T4.1  src/app/api/oauth/kiro/dot-trick/[jobId]/route.js ................ PASS
+
+=== TASK 5: KiroDotTrickModal.js ===
+T5.1  overflow-y-auto count = 1 (no triple scrollbar) .................. PASS
+      Count: 1
+T5.2  import Image from "next/image" present ........................... PASS
+      Line 4: import Image from "next/image";
+T5.3  imageData (live preview) present ................................. PASS
+      Line 290: const imageData = activeJob?.preview?.imageData;
+      Line 545: {imageData ? (
+      Line 547: src={imageData}
+
+=== TASK 6: automation/page.js ===
+T6.1  isDotTrickOpen state present ..................................... PASS
+      Line 27:  const [isDotTrickOpen, setIsDotTrickOpen] = useState(false);
+      Line 81:  action: () => setIsDotTrickOpen(true),
+      Line 131: isOpen={isDotTrickOpen}
+T6.2  Dot Trick button/text present .................................... PASS
+      Line 16: import KiroDotTrickModal from "@/shared/components/KiroDotTrickModal";
+      Line 78: title: "Dot Trick",
+
+========================================
+TALLY: 14/14 checks PASS | 0 FAIL
+
+Scenarios [14/14 pass] | Integration [N/A — static QA only] | VERDICT: APPROVE

@@ -92,7 +92,6 @@ export const TABLES = {
       updatedAt: "TEXT NOT NULL",
     },
     indexes: [
-      "CREATE INDEX IF NOT EXISTS idx_kgt_email ON kiroGmailTokens(email)",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_kgt_email_unique ON kiroGmailTokens(email)",
     ],
   },

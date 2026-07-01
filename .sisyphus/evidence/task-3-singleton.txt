@@ -1,0 +1,4 @@
+Test: getKiroDotTrickManager() singleton
+Command: node -e "import('./src/lib/oauth/services/kiroDotTrickManager.js').then(m => { const a=m.getKiroDotTrickManager(); const b=m.getKiroDotTrickManager(); console.log(a===b); })"
+Result: true
+Date: 2026-06-30 04:13:05

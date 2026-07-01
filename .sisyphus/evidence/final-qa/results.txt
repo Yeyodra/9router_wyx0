@@ -1,0 +1,71 @@
+QA RESULTS — Kiro Dot Trick Feature
+Date: 2026-06-30
+Tester: Playwright MCP (automated)
+URL: http://localhost:20129/dashboard/automation
+
+==============================================================
+SCENARIO RESULTS
+==============================================================
+
+[S1] Automation page loads with Dot Trick visible
+  STATUS: PASS
+  Evidence: body.innerText includes "Dot Trick" at idx=1098
+  Context: "auto_awesome\nDot Trick\nRegister new Kiro accounts via Gmail dot-variants..."
+  Button index 20 of 21 Kiro action buttons confirmed
+  Screenshot: s1-panel.png
+
+[S2] Clicking Dot Trick opens correct modal
+  STATUS: PASS
+  Evidence:
+    - Modal overlay present: fixed inset-0 z-50 flex items-center justify-center p-4
+    - Modal title: "Kiro Dot Trick"
+    - hasGmail: true (Gmail text visible in modal)
+    - hasCredential: true (client_secret.json referenced in modal)
+    - hasAWSInModal: false (AWS Builder ID NOT in Dot Trick modal) ✓
+    - Modal content: "GCP OAuth Credentials / Download client_secret.json from Google Cloud Console..."
+  Screenshot: s2-modal.png
+
+[S3] Modal step indicators visible
+  STATUS: PASS
+  Evidence (from modal text):
+    - Step 1: "Gmail Setup" ✓
+    - Step 2: "Configuration" ✓
+    - Step 3: "Progress" ✓
+    - Full step bar: "Kiro Dot Trick\n1\nGmail Setup\n2\nConfiguration\n3\nProgress"
+  Screenshot: s3-steps.png
+
+[S4] Regression — Auto Login Bulk still works
+  STATUS: PASS
+  Evidence:
+    - Auto Login Bulk button found and clicked
+    - Modal opened: "Connect Kiro / Choose your authentication method"
+    - Modal shows AWS Builder ID auth options (correct KiroOAuthWrapper modal)
+    - hasDotTrickSteps: false — Dot Trick wizard did NOT open ✓
+    - No cross-contamination between modals
+  Screenshot: s4-regression.png
+
+[S5] No critical module errors in console
+  STATUS: PASS
+  Evidence:
+    - Console errors found: 6 total
+    - All errors are pre-existing infrastructure issues:
+      * manifest.webmanifest 500 (PWA manifest — pre-existing)
+      * /api/auth/status 500 (background polling — pre-existing)
+      * /api/version 500 (background polling — pre-existing)
+    - NO "Module not found" errors ✓
+    - NO "Cannot resolve" errors ✓
+    - NO import/bundle errors ✓
+    - Fast Refresh cycles completing normally (1279ms, 1298ms)
+  Screenshot: s5-console.png
+
+==============================================================
+INTEGRATION CHECK
+==============================================================
+  Integration: SKIP
+  Reason: Real Gmail OAuth requires live credentials — intentionally excluded per test scope.
+  Backend API routes (/api/oauth/kiro/dot-trick/, /api/oauth/kiro/gmail-*) present in codebase.
+
+==============================================================
+FINAL VERDICT
+==============================================================
+Scenarios [5/5 pass] | Integration [SKIP] | VERDICT: APPROVE

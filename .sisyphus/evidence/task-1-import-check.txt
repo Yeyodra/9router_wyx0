@@ -1,0 +1,33 @@
+Task: task-1 — qwenCloudBulkImportManager.js
+Date: 2026-06-25T11:08:50Z
+
+=== Syntax check ===
+node --check src\lib\oauth\services\qwenCloudBulkImportManager.js
+RESULT: clean (no output = no errors)
+
+=== grep: relatedUserId ===
+Line 393: relatedUserId: userId,
+RESULT: PRESENT
+
+=== grep: switchAgent ===
+Line 358: switchAgent: Number(tenantId),
+Line 402: switchAgent: Number(tenantId),
+RESULT: PRESENT
+
+=== grep: switchAgentType ===
+RESULT: NOT PRESENT (zero matches)
+
+=== grep: "V" + "1.0" ===
+Lines 287, 315, 349, 389: "V": "1.0",
+RESULT: PRESENT (4 occurrences)
+
+=== Export check ===
+getQwenCloudBulkImportManager: exported as named function
+QwenCloudBulkImportManager: exported as named class
+buildLookupResponse: re-exported from kiroBulkImportManager
+parseKiroBulkAccounts: re-exported from kiroBulkImportManager
+
+=== Full import resolution ===
+NOTE: Cannot verify via plain 
+ode — open-sse alias requires Next.js/Vitest resolver.
+Syntax is valid. All required symbols confirmed present via static analysis.

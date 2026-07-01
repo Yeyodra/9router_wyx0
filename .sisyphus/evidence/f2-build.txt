@@ -1,0 +1,27 @@
+F2 BUILD EVIDENCE
+Generated: 2026-07-01
+Command: npm run build (workdir: C:\Users\Nazril\Documents\Projek\Github\9router_wyx0)
+
+=== RESULT ===
+EXIT CODE: 0 (PASS)
+Build completed with WARNINGS only — no errors.
+
+=== WARNINGS (pre-existing, not from new files) ===
+1. Critical dependency: the request of a dependency is an expression
+   → src/lib/db/adapters/betterSqliteAdapter.js
+   → Import chain: betterSqliteAdapter.js → driver.js → index.js → localDb.js → dashboardGuard.js
+   → Import chain: betterSqliteAdapter.js → driver.js → gmail-accounts/[email]/route.js
+   → Import chain: auto-import/route.js
+   NOTE: These are pre-existing dynamic-require warnings from the SQLite adapter pattern.
+         They are NOT caused by any new dot-trick files.
+
+2. Runtime warnings during page data collection (not build errors):
+   [DATA_DIR] '/var/lib/9router' is a Unix path on Windows → fallback to default
+   [DB] better-sqlite3 unavailable: Cannot find module 'better-sqlite3'
+   [DB] Driver: node:sqlite | file: C:\Users\Nazril\AppData\Roaming\9router\db\data.sqlite
+   NOTE: Expected on Windows dev machine — SQLite adapter falls back to node:sqlite. Normal behavior.
+
+=== CONCLUSION ===
+Build: PASS (exit 0)
+No new errors introduced by dot-trick feature.
+All warnings are pre-existing infrastructure warnings, not regressions.
